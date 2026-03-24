@@ -50,10 +50,10 @@ const fallbackPayload = {
     },
   ],
   map_points: [
-    { song_id: "trad-demo-1", label: "Cançó tradicional 1", x: 18, y: 22, cluster: "Tradicional" },
-    { song_id: "trad-demo-2", label: "Cançó tradicional 2", x: 32, y: 40, cluster: "Tradicional" },
-    { song_id: "smart-demo-1", label: "Cançó intel·ligent 1", x: 62, y: 34, cluster: "Intel·ligent" },
-    { song_id: "smart-demo-2", label: "Cançó intel·ligent 2", x: 76, y: 56, cluster: "Intel·ligent" },
+    { song_id: "trad-demo-1", label: "Cançó tradicional 1", x: 16, y: 73, cluster: "Tradicional" },
+    { song_id: "trad-demo-2", label: "Cançó tradicional 2", x: 41, y: 27, cluster: "Tradicional" },
+    { song_id: "smart-demo-1", label: "Cançó intel·ligent 1", x: 68, y: 61, cluster: "Intel·ligent" },
+    { song_id: "smart-demo-2", label: "Cançó intel·ligent 2", x: 82, y: 18, cluster: "Intel·ligent" },
   ],
 };
 

@@ -4,6 +4,11 @@
   line-height: 1.4;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -12,16 +17,21 @@ body {
   margin: 0;
   background: #f4f6fb;
   color: #172133;
+  overflow: hidden;
 }
 
 .app-shell {
   width: min(1400px, 96vw);
   margin: 0 auto;
-  padding: 20px 0 24px;
+  height: 100dvh;
+  padding: 8px 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 8px;
 }
 
 .top-search {
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
 .search-form {
@@ -33,7 +43,7 @@ body {
 
 .search-form input {
   width: 100%;
-  height: 52px;
+  height: 46px;
   border: 1px solid #ccd5e4;
   border-radius: 14px;
   padding: 0 16px;
@@ -41,7 +51,7 @@ body {
 }
 
 .search-form button {
-  height: 52px;
+  height: 46px;
   border: 0;
   border-radius: 14px;
   padding: 0 18px;
@@ -53,15 +63,18 @@ body {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 420px) 1fr;
-  gap: 16px;
-  min-height: 74vh;
+  grid-template-columns: 38% 62%;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .results-column {
   display: grid;
-  gap: 14px;
-  align-content: start;
+  grid-template-rows: 1fr 1fr;
+  gap: 10px;
+  min-height: 0;
 }
 
 .results-card,
@@ -69,13 +82,19 @@ body {
   background: #fff;
   border: 1px solid #e2e8f3;
   border-radius: 14px;
-  padding: 14px;
+  padding: 9px;
 }
 
 .results-card h2,
 .map-header h2 {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   font-size: 1rem;
+}
+
+.results-card {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
 }
 
 .result-list {
@@ -83,7 +102,9 @@ body {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
+  min-height: 0;
+  overflow: auto;
 }
 
 .result-item {
@@ -112,7 +133,8 @@ body {
   height: 100%;
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 10px;
+  gap: 6px;
+  min-height: 0;
 }
 
 .map-header p {
@@ -123,7 +145,10 @@ body {
 
 .map-canvas {
   position: relative;
-  min-height: 420px;
+  width: min(100%, calc(100dvh - 130px));
+  aspect-ratio: 1 / 1;
+  max-height: calc(100dvh - 145px);
+  margin: 0 auto;
   border-radius: 12px;
   background:
     linear-gradient(transparent 49%, #e6ebf5 50%, transparent 51%),
@@ -183,7 +208,25 @@ body {
 }
 
 @media (max-width: 980px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+  }
+
   .content-grid {
     grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .results-column {
+    grid-template-rows: auto auto;
+  }
+
+  .map-canvas {
+    width: min(100%, 78vh);
   }
 }
