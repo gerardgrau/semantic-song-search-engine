@@ -1,0 +1,6 @@
+# Local frontend overrides
+config.local.js
+
+# Optional build outputs if tooling is added later
+dist/
+build/
