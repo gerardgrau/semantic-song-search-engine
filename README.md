@@ -64,6 +64,7 @@ Main folders relevant to the current MVP:
 - [data](data): raw and processed datasets
 - [etl](etl): future ETL pipeline code
 - [ml](ml): future ML experimentation and model code
+- [youtube_audio_pipeline](youtube_audio_pipeline): high-throughput YouTube audio feature extraction (BPM, Key, Loudness)
 - [tests](tests): test placeholders and future validation suites
 
 ## Local development
@@ -75,6 +76,8 @@ Install these tools locally:
 - Python 3.11+ or 3.12
 - Node.js 20+
 - npm 10+
+- `aria2` (system package)
+- `ffmpeg` (system package)
 
 Optional but recommended:
 
@@ -188,6 +191,57 @@ When both apps are running:
 
 - the frontend calls the backend through `NEXT_PUBLIC_API_BASE_URL`
 - if the backend is unreachable, the frontend automatically falls back to local mock data
+
+## YouTube audio processing pipeline
+
+The project includes a dedicated module to process large batches of YouTube URLs and extract:
+
+- BPM
+- Key
+- Loudness
+
+Module location:
+
+- [youtube_audio_pipeline](youtube_audio_pipeline)
+
+### How it works
+
+1. Downloads native best-audio stream with `yt-dlp`.
+2. Routes temporary files to `/dev/shm` (RAM-disk) by default.
+3. Uses `aria2c` downloader acceleration where available.
+4. Extracts music features with `essentia.standard` (with temporary in-RAM WAV conversion fallback when native codec loading is unavailable).
+5. Deletes each temporary file immediately after analysis.
+
+### Prepare input URLs
+
+Edit [youtube_audio_pipeline/urls.example.txt](youtube_audio_pipeline/urls.example.txt) with one URL per line.
+
+### Run the pipeline
+
+From repository root:
+
+```bash
+python -m youtube_audio_pipeline.main --urls-file youtube_audio_pipeline/urls.example.txt
+```
+
+Default output CSV:
+
+- `data/processed/youtube_song_characteristics.csv`
+
+### Useful options
+
+```bash
+python -m youtube_audio_pipeline.main \
+	--urls-file youtube_audio_pipeline/urls.example.txt \
+	--output-csv data/processed/my_youtube_features.csv \
+	--ram-disk-path /dev/shm/yt_audio \
+	--workers 22 \
+	--flush-every 250
+```
+
+### Module-specific docs
+
+- [youtube_audio_pipeline/README.md](youtube_audio_pipeline/README.md)
 
 ## Local environment variables
 

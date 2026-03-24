@@ -53,6 +53,11 @@ From the repository root:
 - install dependencies from [../requirements.txt](../requirements.txt)
 - start the FastAPI application from `backend.api.main:app`
 
+System dependencies for the YouTube pipeline:
+
+- `aria2`
+- `ffmpeg`
+
 ## Notebook setup (same environment)
 
 Use the same root `.venv` unless dependency conflicts appear.
@@ -110,6 +115,32 @@ Expected value for local development:
 - `GET /search/smart?q=songs for a nostalgic night drive`
 - `GET /songs/llum-dins-la-pluja`
 - `GET /songs/llum-dins-la-pluja/recommendations`
+
+## YouTube pipeline usage
+
+Prepare URL list:
+
+- edit [../youtube_audio_pipeline/urls.example.txt](../youtube_audio_pipeline/urls.example.txt)
+
+Run from repository root:
+
+```bash
+python -m youtube_audio_pipeline.main --urls-file youtube_audio_pipeline/urls.example.txt
+```
+
+Common tuning options:
+
+```bash
+python -m youtube_audio_pipeline.main \
+	--urls-file youtube_audio_pipeline/urls.example.txt \
+	--output-csv data/processed/my_youtube_features.csv \
+	--workers 22 \
+	--flush-every 250
+```
+
+Default output:
+
+- `data/processed/youtube_song_characteristics.csv`
 
 ## Current limitations
 
