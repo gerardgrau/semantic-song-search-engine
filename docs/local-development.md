@@ -6,8 +6,8 @@ This document describes how to run the current **prototype scaffold**.
 
 The prototype has two services:
 
-1. frontend UI in [../frontend](../frontend)
-2. backend API in [../backend](../backend)
+1. frontend UI in [../app/frontend](../app/frontend)
+2. backend API in [../app/backend](../app/backend)
 
 The frontend layout can be shown with backend data or fallback mock data.
 
@@ -32,7 +32,7 @@ pip install -r requirements.txt
 From repository root:
 
 ```bash
-uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Useful URLs:
@@ -47,7 +47,7 @@ Useful URLs:
 From repository root:
 
 ```bash
-python -m http.server 3000 -d frontend
+python -m http.server 3000 -d app/frontend
 ```
 
 Frontend URL:
@@ -56,9 +56,9 @@ Frontend URL:
 
 API URL used by frontend:
 
-- [../frontend/config.js](../frontend/config.js)
+- [../app/frontend/config.js](../app/frontend/config.js)
 
-If needed, copy [../frontend/config.example.js](../frontend/config.example.js) to `frontend/config.js` and update `API_BASE_URL`.
+If needed, copy [../app/frontend/config.example.js](../app/frontend/config.example.js) to `app/frontend/config.js` and update `API_BASE_URL`.
 
 ## Current prototype behavior
 

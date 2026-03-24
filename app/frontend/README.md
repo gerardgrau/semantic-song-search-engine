@@ -17,7 +17,7 @@ It intentionally uses mock/test content so the team can validate UX before imple
 ## Structure
 
 ```text
-frontend/
+app/frontend/
   index.html
   styles.css
   app.js
@@ -35,14 +35,14 @@ window.APP_CONFIG = {
 }
 ```
 
-If backend URL changes, edit `frontend/config.js`.
+If backend URL changes, edit `app/frontend/config.js`.
 
 ## Run frontend locally
 
 From repository root:
 
 ```bash
-python -m http.server 3000 -d frontend
+python -m http.server 3000 -d app/frontend
 ```
 
 Open:

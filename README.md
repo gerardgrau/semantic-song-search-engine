@@ -29,7 +29,7 @@ Real search engines, ML ranking, and real map behavior are planned for later ite
 
 Location:
 
-- [frontend](frontend)
+- [app/frontend](app/frontend)
 
 ### Backend prototype
 
@@ -39,7 +39,7 @@ Location:
 
 Location:
 
-- [backend](backend)
+- [app/backend](app/backend)
 
 ### Other project modules (kept)
 
@@ -52,8 +52,9 @@ Location:
 ## Repository structure (high level)
 
 ```text
-backend/
-frontend/
+app/
+  backend/
+  frontend/
 data/
 docs/
 etl/
@@ -86,7 +87,7 @@ pip install -r requirements.txt
 From repository root:
 
 ```bash
-uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Backend URLs:
@@ -100,7 +101,7 @@ Backend URLs:
 From repository root:
 
 ```bash
-python -m http.server 3000 -d frontend
+python -m http.server 3000 -d app/frontend
 ```
 
 Frontend URL:
@@ -109,7 +110,7 @@ Frontend URL:
 
 Frontend API config file:
 
-- [frontend/config.js](frontend/config.js)
+- [app/frontend/config.js](app/frontend/config.js)
 
 ## API contract (prototype)
 
@@ -147,5 +148,5 @@ The YouTube audio module remains available and unchanged. See:
 ## Additional documentation
 
 - [docs/local-development.md](docs/local-development.md)
-- [frontend/README.md](frontend/README.md)
-- [backend/README.md](backend/README.md)
+- [app/frontend/README.md](app/frontend/README.md)
+- [app/backend/README.md](app/backend/README.md)

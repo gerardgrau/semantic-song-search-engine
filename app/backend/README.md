@@ -11,7 +11,7 @@ This backend is a **mock API** designed to support the frontend layout demo whil
 ## Structure
 
 ```text
-backend/
+app/backend/
   api/
     main.py
     schemas.py
@@ -34,7 +34,7 @@ backend/
 From repository root:
 
 ```bash
-uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Open docs at:
