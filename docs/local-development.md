@@ -53,6 +53,32 @@ From the repository root:
 - install dependencies from [../requirements.txt](../requirements.txt)
 - start the FastAPI application from `backend.api.main:app`
 
+## Notebook setup (same environment)
+
+Use the same root `.venv` unless dependency conflicts appear.
+
+From the repository root:
+
+- install base backend deps from [../requirements.txt](../requirements.txt)
+- install notebook deps from [../requirements-notebooks.txt](../requirements-notebooks.txt)
+- register `.venv` as a Jupyter kernel
+
+Suggested kernel name:
+
+- `semantic-song-search (.venv)`
+
+Then open notebooks from [../notebooks](../notebooks) and select that kernel.
+
+Example commands:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-notebooks.txt
+python -m ipykernel install --user --name semantic-song-search --display-name "semantic-song-search (.venv)"
+```
+
 Default backend URL:
 
 - `http://127.0.0.1:8000`

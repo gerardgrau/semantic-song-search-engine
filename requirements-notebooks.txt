@@ -1,0 +1,21 @@
+# Notebook-specific dependencies (installed on top of requirements.txt)
+# Keep this file focused on experimentation and prototyping packages.
+
+# Jupyter runtime
+ipykernel>=6.29,<7.0
+notebook>=7.2,<8.0
+
+# Data + numeric
+numpy>=1.26,<3.0
+pandas>=2.2,<3.0
+
+# ML / NLP stack used in notebooks
+torch>=2.4,<3.0
+transformers>=4.44,<5.0
+sentence-transformers>=3.0,<4.0
+accelerate>=0.34,<1.0
+scikit-learn>=1.5,<2.0
+
+# Utilities
+tqdm>=4.66,<5.0
+matplotlib>=3.9,<4.0

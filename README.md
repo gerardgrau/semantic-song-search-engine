@@ -99,6 +99,30 @@ The backend currently uses these packages:
 - `uvicorn`
 - `pydantic`
 
+### 2.5 Notebook setup (same `.venv`)
+
+To run project notebooks in the same environment, install notebook dependencies on top of backend requirements:
+
+1. Install [requirements.txt](requirements.txt).
+2. Install [requirements-notebooks.txt](requirements-notebooks.txt).
+3. Register the virtual environment as a Jupyter kernel.
+
+Recommended kernel display name:
+
+- `semantic-song-search (.venv)`
+
+This keeps one shared environment for backend + notebooks while dependencies are still manageable.
+
+Example commands from repository root:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -r requirements-notebooks.txt
+python -m ipykernel install --user --name semantic-song-search --display-name "semantic-song-search (.venv)"
+```
+
 ### 3. Frontend setup
 
 From [frontend](frontend):
