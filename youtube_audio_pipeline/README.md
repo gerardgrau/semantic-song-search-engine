@@ -7,9 +7,18 @@ High-throughput module to download YouTube audio URLs directly into RAM and extr
 - Loudness
 - DurationSeconds
 - RmsEnergy
+- KeyStrength
+- BeatConfidence
+- BeatCount
+- OnsetRate
+- OnsetCount
 - Danceability (proxy)
 - Valence (proxy)
 - SpectralCentroidHz
+- SpectralRolloffHz
+- SpectralFlatness
+- PitchMeanHz
+- PitchStdHz
 - ZeroCrossingRate
 - YouTubeID (stable join key for DB updates)
 
@@ -112,8 +121,16 @@ CSV columns include:
 - `SourceInput` (original raw value from your file/CLI)
 - `Title`, `BPM`, `Key`, `Loudness`
 - `DurationSeconds`, `RmsEnergy`
+- `KeyStrength`, `BeatConfidence`, `BeatCount`, `OnsetRate`, `OnsetCount`
 - `Danceability`, `Valence`
-- `SpectralCentroidHz`, `ZeroCrossingRate`
+- `SpectralCentroidHz`, `SpectralRolloffHz`, `SpectralFlatness`
+- `PitchMeanHz`, `PitchStdHz`, `ZeroCrossingRate`
+- `MfccMeanJson`, `MfccStdJson`, `HpcpMeanJson`
+
+Storage design:
+
+- High-value scalar descriptors are stored as regular CSV columns.
+- High-dimensional vectors are stored as JSON strings (`MfccMeanJson`, `MfccStdJson`, `HpcpMeanJson`) for flexible DB ingestion.
 
 ## Common options
 
