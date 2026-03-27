@@ -1,0 +1,202 @@
+├── CHANGELOG.md
+├── LICENSE
+├── README.md
+├── robots.txt
+├── audio-event-recognition/
+│   ├── fsd-sinet/
+│   │   ├── fsd-sinet-vgg41-tlpf-1.[json, pb]
+│   │   ├── fsd-sinet-vgg42-aps-1.[json, pb]
+│   │   ├── fsd-sinet-vgg42-tlpf-1.[json, pb]
+│   │   └── fsd-sinet-vgg42-tlpf_aps-1.[json, pb]
+│   └── yamnet/
+│       └── audioset-yamnet-1.[json, onnx, pb]
+├── autotagging/
+│   ├── msd/
+│   │   ├── msd-musicnn-1-tfjs.zip
+│   │   ├── msd-musicnn-1.[json, onnx, pb]
+│   │   ├── msd-vgg-1-tfjs.zip
+│   │   └── msd-vgg-1.[json, onnx, pb]
+│   └── mtt/
+│       ├── mtt-musicnn-1-tfjs.zip
+│       ├── mtt-musicnn-1.[json, onnx, pb]
+│       ├── mtt-vgg-1-tfjs.zip
+│       └── mtt-vgg-1.[json, onnx, pb]
+├── classification-heads/
+│   ├── approachability/
+│   │   ├── approachability_2c-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── approachability_3c-discogs-effnet-1.[json, onnx, pb]
+│   │   └── approachability_regression-discogs-effnet-1.[json, onnx, pb]
+│   ├── danceability/
+│   │   ├── danceability-msd-musicnn-1-tfjs/
+│   │   ├── danceability-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── danceability-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── danceability-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── danceability-msd-musicnn-1.[json, onnx, pb]
+│   │   └── danceability-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── deam/
+│   │   ├── deam-musicnn-msd-1-tfjs/
+│   │   ├── README.md
+│   │   ├── deam-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── deam-audioset-vggish-2.[json, onnx, pb]
+│   │   ├── deam-msd-musicnn-1.[json, onnx, pb]
+│   │   └── deam-msd-musicnn-2.[json, onnx, pb]
+│   ├── emomusic/
+│   │   ├── emomusic-musicnn-msd-1-tfjs/
+│   │   ├── README.md
+│   │   ├── emomusic-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── emomusic-audioset-vggish-2.[json, onnx, pb]
+│   │   ├── emomusic-msd-musicnn-1.[json, onnx, pb]
+│   │   └── emomusic-msd-musicnn-2.[json, onnx, pb]
+│   ├── engagement/
+│   │   ├── engagement_2c-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── engagement_3c-discogs-effnet-1.[json, onnx, pb]
+│   │   └── engagement_regression-discogs-effnet-1.[json, onnx, pb]
+│   ├── fma_small/
+│   │   ├── fma_small-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── fma_small-discogs_artist_embeddings-effnet-1.[json, onnx, pb]
+│   │   ├── fma_small-discogs_label_embeddings-effnet-1.[json, onnx, pb]
+│   │   ├── fma_small-discogs_multi_embeddings-effnet-1.[json, onnx, pb]
+│   │   ├── fma_small-discogs_release_embeddings-effnet-1.[json, onnx, pb]
+│   │   └── fma_small-discogs_track_embeddings-effnet-1.[json, onnx, pb]
+│   ├── fs_loop_ds/
+│   │   └── fs_loop_ds-msd-musicnn-1.[json, onnx, pb]
+│   ├── gender/
+│   │   ├── gender-msd-musicnn-1-tfjs/
+│   │   ├── gender-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── gender-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── gender-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── gender-msd-musicnn-1.[json, onnx, pb]
+│   │   └── gender-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── genre_discogs400/
+│   │   ├── genre_discogs400-discogs-effnet-1.[json, pb]
+│   │   ├── genre_discogs400-discogs-maest-10s-dw-1.[json, onnx, pb]
+│   │   ├── genre_discogs400-discogs-maest-10s-fs-1.[json, onnx, pb]
+│   │   ├── genre_discogs400-discogs-maest-10s-pw-1.[json, onnx, pb]
+│   │   ├── genre_discogs400-discogs-maest-20s-pw-1.[json, onnx, pb]
+│   │   ├── genre_discogs400-discogs-maest-30s-pw-1.[json, onnx, pb]
+│   │   ├── genre_discogs400-discogs-maest-30s-pw-ts-1.[json, onnx, pb]
+│   │   └── genre_discogs400-discogs-maest-5s-pw-1.[json, onnx, pb]
+│   ├── genre_discogs519/
+│   │   └── genre_discogs519-discogs-maest-30s-pw-519l-1.[json, onnx, pb]
+│   ├── genre_dortmund/
+│   │   ├── genre_dortmund-msd-musicnn-1-tfjs/
+│   │   ├── genre_dortmund-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── genre_dortmund-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── genre_dortmund-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── genre_dortmund-msd-musicnn-1.[json, onnx, pb]
+│   │   └── genre_dortmund-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── genre_electronic/
+│   │   └── genre_electronic-discogs-effnet-1.[json, onnx, pb]
+│   ├── genre_rosamerica/
+│   │   ├── genre_rosamerica-msd-musicnn-1-tfjs/
+│   │   ├── genre_rosamerica-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── genre_rosamerica-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── genre_rosamerica-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── genre_rosamerica-msd-musicnn-1.[json, onnx, pb]
+│   │   └── genre_rosamerica-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── genre_tzanetakis/
+│   │   ├── genre_tzanetakis-msd-musicnn-1-tfjs/
+│   │   ├── genre_tzanetakis-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── genre_tzanetakis-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── genre_tzanetakis-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── genre_tzanetakis-msd-musicnn-1.[json, onnx, pb]
+│   │   └── genre_tzanetakis-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── mood_acoustic/
+│   │   ├── mood_acoustic-msd-musicnn-1-tfjs/
+│   │   ├── mood_acoustic-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── mood_acoustic-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── mood_acoustic-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── mood_acoustic-msd-musicnn-1.[json, onnx, pb]
+│   │   └── mood_acoustic-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── mood_{aggressive, electronic, happy, party, relaxed, sad}/
+│   │   ├── mood_{aggressive, electronic, happy, party, relaxed, sad}-msd-musicnn-1-tfjs/
+│   │   ├── mood_{aggressive, electronic, happy, party, relaxed, sad}-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── mood_{aggressive, electronic, happy, party, relaxed, sad}-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── mood_{aggressive, electronic, happy, party, relaxed, sad}-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── mood_{aggressive, electronic, happy, party, relaxed, sad}-msd-musicnn-1.[json, onnx, pb]
+│   │   └── mood_{aggressive, electronic, happy, party, relaxed, sad}-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── moods_mirex/
+│   │   ├── moods_mirex-msd-musicnn-1-tfjs/
+│   │   ├── moods_mirex-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── moods_mirex-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── moods_mirex-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── moods_mirex-msd-musicnn-1.[json, onnx, pb]
+│   │   └── moods_mirex-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   ├── mtg_jamendo_{genre, instrument, moodtheme, top50tags}/
+│   │   └── mtg_jamendo_{genre, instrument, moodtheme, top50tags}-discogs-effnet-1.[json, onnx, pb]
+│   ├── msd/
+│   │   └── msd-musicnn-1.[json, onnx, pb]
+│   ├── mtt/
+│   │   └── mtt-musicnn-1.[json, onnx, pb]
+│   ├── muse/
+│   │   └── muse-discogs-effnet-1.[json, onnx, pb]
+│   ├── nsynth_{acoustic_electronic, bright_dark, instrument, reverb}/
+│   │   └── nsynth_{acoustic_electronic, bright_dark, instrument, reverb}-discogs-effnet-1.[json, onnx, pb]
+│   ├── timbre/
+│   │   └── timbre-discogs-effnet-1.[json, onnx, pb]
+│   ├── tonal_atonal/
+│   │   ├── tonal_atonal-msd-musicnn-1-tfjs/
+│   │   ├── tonal_atonal-audioset-vggish-1.[json, onnx, pb]
+│   │   ├── tonal_atonal-audioset-yamnet-1.[json, onnx, pb]
+│   │   ├── tonal_atonal-discogs-effnet-1.[json, onnx, pb]
+│   │   ├── tonal_atonal-msd-musicnn-1.[json, onnx, pb]
+│   │   └── tonal_atonal-openl3-music-mel128-emb512-1.[json, onnx, pb]
+│   └── voice_instrumental/
+│       ├── voice_instrumental-msd-musicnn-1-tfjs/
+│       ├── voice_instrumental-audioset-vggish-1.[json, onnx, pb]
+│       ├── voice_instrumental-audioset-yamnet-1.[json, onnx, pb]
+│       ├── voice_instrumental-discogs-effnet-1.[json, onnx, pb]
+│       ├── voice_instrumental-msd-musicnn-1.[json, onnx, pb]
+│       └── voice_instrumental-openl3-music-mel128-emb512-1.[json, onnx, pb]
+├── classifiers/
+│   ├── danceability, fs_loop_ds, gender, genre_{dortmund, electronic, rosamerica, tzanetakis}, mood_{acoustic, aggressive, electronic, happy, party, relaxed, sad}, moods_mirex, tonal_atonal, urbansound8k, voice_instrumental}/
+│   │   ├── {classifier}-musicnn-msd-{1, 2}-tfjs.zip
+│   │   ├── {classifier}-musicnn-msd-{1, 2}.[json, pb]
+│   │   ├── {classifier}-musicnn-mtt-{1, 2}-tfjs.zip
+│   │   ├── {classifier}-musicnn-mtt-{1, 2}.[json, pb]
+│   │   ├── {classifier}-vgg-msd-2.[json, pb]
+│   │   ├── {classifier}-vgg-mtt-2.[json, pb]
+│   │   ├── {classifier}-vggish-audioset-1-tfjs.zip
+│   │   └── {classifier}-vggish-audioset-1.[json, pb]
+├── feature-extractors/
+│   ├── discogs-effnet/
+│   │   └── discogs-effnet-1.[json, onnx, pb]
+│   ├── maest/
+│   │   └── maest-1.[json, onnx, pb]
+│   ├── musicnn/
+│   │   └── musicnn-1.[json, onnx, pb]
+│   ├── openl3/
+│   │   └── openl3-1.[json, onnx, pb]
+│   └── vggish/
+│       └── vggish-1.[json, onnx, pb]
+├── legacy/
+│   ├── autotagging/
+│   │   └── {models}.[json, pb]
+│   ├── classifiers/
+│   │   └── voice_instrumental/
+│   │       ├── voice_instrumental-musicnn-mtt-2.[json, pb]
+│   │       ├── voice_instrumental-vgg-msd-2.[json, pb]
+│   │       ├── voice_instrumental-vgg-mtt-2.[json, pb]
+│   │       ├── voice_instrumental-vggish-audioset-1-tfjs.zip
+│   │       └── voice_instrumental-vggish-audioset-1.[json, pb]
+│   └── music-style-classification/
+│       └── discogs-effnet/
+│           └── discogs-effnet-bs64-1-savedmodel.zip
+├── music-style-classification/
+│   └── discogs-effnet/
+│       └── discogs-effnet-1.[json, onnx, pb]
+├── pitch/
+│   └── crepe/
+│       ├── crepe-{tiny, small, medium, large, full}-1.[json, pb]
+├── source-separation/
+│   └── spleeter/
+│       └── spleeter-{2s, 4s, 5s}-3.[json, pb]
+└── tempo/
+    ├── tempocnn/
+    │   ├── LICENSE
+    │   ├── deepsquare-k16-3-tfjs.zip
+    │   ├── deepsquare-k16-3.[json, pb]
+    │   ├── deeptemp-k4-3-tfjs.zip
+    │   ├── deeptemp-k4-3.[json, pb]
+    │   ├── deeptemp-k16-3-tfjs.zip
+    │   └── deeptemp-k16-3.[json, pb]

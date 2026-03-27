@@ -1,0 +1,4 @@
+# Essentia pretrained model files (too large for repo, download separately)
+*.pb
+*.onnx
+*_metadata.json

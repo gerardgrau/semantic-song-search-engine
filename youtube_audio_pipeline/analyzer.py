@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import uuid
 from pathlib import Path
 
 import essentia.standard as es
+import numpy as np
 import pandas as pd
+
+from youtube_audio_pipeline import model_inference
+
+logger = logging.getLogger(__name__)
 
 
 def _prepare_analysis_file(filepath: str) -> tuple[str, bool]:
@@ -197,6 +203,32 @@ def analyze_and_discard(filepath: str | None, url: str, title: str | None) -> di
         loudness_norm = _clamp((float(overall_loudness) + 45.0) / 45.0)
         valence_proxy = _clamp(0.45 * major_flag + 0.35 * centroid_norm + 0.2 * loudness_norm)
 
+        # Run model inference for genre, mood, and embeddings
+        genre_probs = model_inference.run_genre_inference(audio, sr=sample_rate)
+        mood_probs = model_inference.run_mood_inference(audio, sr=sample_rate)
+        embedding = model_inference.run_embedding_inference(audio, sr=sample_rate)
+
+        # Extract top-1 genre and confidence
+        genre_top_label = "Unknown"
+        genre_top_confidence = 0.0
+        if genre_probs:
+            genre_top_label, genre_top_confidence = max(genre_probs.items(), key=lambda x: x[1])
+            genre_top_confidence = round(float(genre_top_confidence), 4)
+
+        # Extract mood confidences (default to 0.0 if not available)
+        mood_acoustic = round(float(mood_probs.get("acoustic", 0.0)), 4)
+        mood_aggressive = round(float(mood_probs.get("aggressive", 0.0)), 4)
+        mood_electronic = round(float(mood_probs.get("electronic", 0.0)), 4)
+        mood_happy = round(float(mood_probs.get("happy", 0.0)), 4)
+        mood_party = round(float(mood_probs.get("party", 0.0)), 4)
+        mood_relaxed = round(float(mood_probs.get("relaxed", 0.0)), 4)
+        mood_sad = round(float(mood_probs.get("sad", 0.0)), 4)
+
+        # Serialize results
+        genre_probs_json = json.dumps({str(k): float(v) for k, v in genre_probs.items()}) if genre_probs else "{}"
+        mood_probs_json = json.dumps({str(k): float(v) for k, v in mood_probs.items()}) if mood_probs else "{}"
+        embedding_json = json.dumps(embedding.tolist()) if embedding is not None else "[]"
+
         return {
             "URL": url,
             "Title": safe_title,
@@ -221,6 +253,18 @@ def analyze_and_discard(filepath: str | None, url: str, title: str | None) -> di
             "MfccMeanJson": json.dumps(frame_stats["mfcc_mean"]),
             "MfccStdJson": json.dumps(frame_stats["mfcc_std"]),
             "HpcpMeanJson": json.dumps(frame_stats["hpcp_mean"]),
+            "GenreTopLabel": genre_top_label,
+            "GenreTopConfidence": genre_top_confidence,
+            "GenreProbsJson": genre_probs_json,
+            "MoodAcoustic": mood_acoustic,
+            "MoodAggressive": mood_aggressive,
+            "MoodElectronic": mood_electronic,
+            "MoodHappy": mood_happy,
+            "MoodParty": mood_party,
+            "MoodRelaxed": mood_relaxed,
+            "MoodSad": mood_sad,
+            "MoodProbsJson": mood_probs_json,
+            "DiscogsEmbeddingJson": embedding_json,
         }
     except Exception as exc:
         print(f"❌ Analysis failed for {safe_title} | Error: {exc}")

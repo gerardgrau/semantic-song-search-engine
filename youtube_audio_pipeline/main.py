@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from youtube_audio_pipeline.analyzer import analyze_and_discard, save_to_dataframe
 from youtube_audio_pipeline.downloader import download_to_ram
 from youtube_audio_pipeline.youtube_utils import canonical_watch_url, extract_video_id, normalize_youtube_input
+from youtube_audio_pipeline import model_inference
+
+logger = logging.getLogger(__name__)
 
 
 def load_urls(urls_file: str | None, urls_cli: list[str] | None) -> list[dict[str, str | None]]:
@@ -156,6 +160,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=200,
         help="Write to CSV every N processed songs.",
     )
+    parser.add_argument(
+        "--skip-models",
+        action="store_true",
+        help="Skip model inference (genre, mood, embeddings). Useful for testing.",
+    )
     return parser
 
 
@@ -163,10 +172,21 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    # Configure logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
     urls = load_urls(args.urls_file, args.url)
     if not urls:
         print("No URLs found. Provide --urls-file and/or --url.")
         return
+
+    # Pre-load models if not skipped
+    if not args.skip_models:
+        print("Initializing Essentia models (genre, mood, embeddings)...")
+        model_inference.initialize_models_globally()
+        print("✓ Models ready")
+    else:
+        print("⚠️ Model inference skipped (--skip-models flag set)")
 
     print(f"Starting pipeline for {len(urls)} URL(s) with {args.workers} worker(s)...")
     processed_count, saved_count = run_pipeline(

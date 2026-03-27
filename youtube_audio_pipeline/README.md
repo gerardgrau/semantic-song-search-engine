@@ -2,6 +2,8 @@
 
 High-throughput module to download YouTube audio URLs directly into RAM and extract:
 
+### Audio Features (Essentia-based)
+
 - BPM
 - Key
 - Loudness
@@ -20,9 +22,24 @@ High-throughput module to download YouTube audio URLs directly into RAM and extr
 - PitchMeanHz
 - PitchStdHz
 - ZeroCrossingRate
-- YouTubeID (stable join key for DB updates)
 
-The output is stored in CSV format for downstream processing.
+### High-Level Model Features (TensorFlow Pretrained)
+
+- **Genre Classification**: `GenreTopLabel`, `GenreTopConfidence`, `GenreProbsJson` (multi-label via Dortmund/Discogs)
+- **Mood Classification** (7 dimensions): `MoodAcoustic`, `MoodAggressive`, `MoodElectronic`, `MoodHappy`, `MoodParty`, `MoodRelaxed`, `MoodSad`, `MoodProbsJson`
+- **Audio Embedding**: `DiscogsEmbeddingJson` (2048-dim Discogs EfficientNet embedding)
+
+### Vector Features (JSON-serialized)
+
+- `MfccMeanJson`, `MfccStdJson` (13-dim MFCC coefficients)
+- `HpcpMeanJson` (12-dim chroma features)
+
+Additional metadata:
+
+- `YouTubeID` (stable join key for DB updates)
+- `SourceInput` (original user-provided URL/ID)
+
+The output is stored in CSV format for downstream processing (database ingestion, embeddings indexing, etc.).
 
 ## Why this module is fast
 
@@ -52,6 +69,51 @@ Practical note:
 Compatibility note:
 
 - If the downloaded codec is not directly readable by Essentia in your environment, the analyzer performs a temporary in-RAM conversion to mono 44.1kHz WAV using `ffmpeg`, analyzes it, and deletes both files immediately.
+
+## Model Initialization
+
+The pipeline uses Essentia pretrained TensorFlow models for genre, 7-dimensional mood, and embedding inference. Models are initialized globally at startup (before ThreadPoolExecutor begins) to amortize overhead across all workers.
+
+### Model Files Location
+
+Models are stored in `youtube_audio_pipeline/models/` and are **not committed to Git** (see `.gitignore`). You need to download them manually:
+
+```bash
+mkdir -p youtube_audio_pipeline/models/
+cd youtube_audio_pipeline/models/
+
+# Download genre model
+wget http://essentia.upf.edu/models/classifiers/genre/discogs-effnet/genre_dortmund-discogs-effnet-1.pb
+wget http://essentia.upf.edu/models/classifiers/genre/discogs-effnet/genre_dortmund-discogs-effnet-1_metadata.json
+
+# Download mood models (7 dimensions)
+for mood in acoustic aggressive electronic happy party relaxed sad; do
+  wget "http://essentia.upf.edu/models/classifiers/mood/discogs-effnet/mood_${mood}-discogs-effnet-1.pb"
+  wget "http://essentia.upf.edu/models/classifiers/mood/discogs-effnet/mood_${mood}-discogs-effnet-1_metadata.json"
+done
+
+# Download embedding extractor
+wget http://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-1.pb
+wget http://essentia.upf.edu/models/feature-extractors/discogs-effnet/discogs-effnet-1_metadata.json
+```
+
+### Disabling Models
+
+If models are unavailable or you want to test the audio-only pipeline, use `--skip-models`:
+
+```bash
+python -m youtube_audio_pipeline --urls-file urls.txt --skip-models
+```
+
+This will skip genre/mood/embedding inference and only output the 23 audio features.
+
+## Performance Notes
+
+- **Audio feature extraction**: ~0.5–1s per song (Essentia C++ backend)
+- **Model inference** (genre + 7 moods + embedding): ~2.7–4.5s per song (TensorFlow)
+- **Total end-to-end**: ~3–5s per song with 22 workers
+
+Model initialization adds ~5–8 seconds to the startup sequence (one-time cost for 9 models).
 
 ## Files
 
@@ -116,21 +178,49 @@ CSV output default:
 
 CSV columns include:
 
+**Metadata:**
 - `YouTubeID`
 - `URL` (canonical where available)
 - `SourceInput` (original raw value from your file/CLI)
-- `Title`, `BPM`, `Key`, `Loudness`
-- `DurationSeconds`, `RmsEnergy`
-- `KeyStrength`, `BeatConfidence`, `BeatCount`, `OnsetRate`, `OnsetCount`
+- `Title`
+
+**Rhythm & Timing:**
+- `BPM`, `BeatCount`, `BeatConfidence`
+- `OnsetRate`, `OnsetCount`
+- `DurationSeconds`
+
+**Harmonic & Key:**
+- `Key`, `KeyStrength`
+
+**Energy & Loudness:**
+- `Loudness`, `RmsEnergy`
+
+**Spectral Descriptors:**
+- `SpectralCentroidHz`, `SpectralRolloffHz`, `SpectralFlatness`, `ZeroCrossingRate`
+
+**Pitch:**
+- `PitchMeanHz`, `PitchStdHz`
+
+**High-Level Proxies:**
 - `Danceability`, `Valence`
-- `SpectralCentroidHz`, `SpectralRolloffHz`, `SpectralFlatness`
-- `PitchMeanHz`, `PitchStdHz`, `ZeroCrossingRate`
-- `MfccMeanJson`, `MfccStdJson`, `HpcpMeanJson`
+
+**Genre & Mood (Model-based):**
+- `GenreTopLabel` (top-1 genre label)
+- `GenreTopConfidence` (confidence of top-1 [0-1])
+- `GenreProbsJson` (full multi-label genre probabilities)
+- `MoodAcoustic`, `MoodAggressive`, `MoodElectronic`, `MoodHappy`, `MoodParty`, `MoodRelaxed`, `MoodSad` (7 mood dimensions)
+- `MoodProbsJson` (full mood distribution)
+
+**Vectors (JSON-serialized):**
+- `MfccMeanJson` (mean of 13 MFCC coefficients per frame)
+- `MfccStdJson` (std of 13 MFCC coefficients per frame)
+- `HpcpMeanJson` (mean of 12-dim chroma vector)
+- `DiscogsEmbeddingJson` (2048-dim audio embedding)
 
 Storage design:
 
-- High-value scalar descriptors are stored as regular CSV columns.
-- High-dimensional vectors are stored as JSON strings (`MfccMeanJson`, `MfccStdJson`, `HpcpMeanJson`) for flexible DB ingestion.
+- High-value scalar descriptors are stored as regular CSV columns (queryable, indexable).
+- High-dimensional vectors are stored as JSON strings for flexible DB ingestion.
 
 ## Common options
 
@@ -140,7 +230,8 @@ python -m youtube_audio_pipeline.main \
   --output-csv data/processed/my_features.csv \
   --ram-disk-path /dev/shm/yt_audio \
   --workers 22 \
-  --flush-every 250
+  --flush-every 250 \
+  --skip-models  # Optional: disable model inference (audio features only)
 ```
 
 Add ad-hoc URLs without editing a file:
@@ -192,6 +283,15 @@ python -m youtube_audio_pipeline.benchmark \
 
 ## Credits
 
-This project is made possible by the Essentia library:
+This project is made possible by:
 
-- http://essentia.upf.edu
+- **Essentia Library** (Audio feature extraction + Pretrained Models)
+  - http://essentia.upf.edu
+  - Models trained on Discogs dataset (200M+ tracks)
+  - Reference: Bogdanov, D., Nicolas, N., et al. "ESSENTIA: An Open-Source Library for the Audio Description"
+  
+- **yt-dlp** (YouTube audio download)
+  - https://github.com/yt-dlp/yt-dlp
+
+- **aria2** (Download acceleration)
+  - https://aria2.github.io
