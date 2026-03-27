@@ -5,6 +5,12 @@ High-throughput module to download YouTube audio URLs directly into RAM and extr
 - BPM
 - Key
 - Loudness
+- DurationSeconds
+- RmsEnergy
+- Danceability (proxy)
+- Valence (proxy)
+- SpectralCentroidHz
+- ZeroCrossingRate
 - YouTubeID (stable join key for DB updates)
 
 The output is stored in CSV format for downstream processing.
@@ -16,6 +22,23 @@ The output is stored in CSV format for downstream processing.
 - Integrates `yt-dlp` with `aria2c` (`-x 16 -s 16 -k 1M`) for accelerated transfer.
 - Uses C++-backed `essentia.standard` for high-performance feature extraction.
 - Enforces analyze-and-delete so temporary files are removed immediately.
+
+## Concurrency model
+
+The pipeline uses two layers of parallelism:
+
+1. **Song-level parallelism (Python threads):**
+  - `main.py` uses a `ThreadPoolExecutor`.
+  - Each worker processes a different song URL (`download -> analyze -> discard`).
+
+2. **Per-song download parallelism (`aria2c`):**
+  - Inside each song download, `yt-dlp` calls `aria2c` with multiple connections (`-x 16 -s 16`).
+  - This can split the same song download into multiple chunks/connections.
+
+Practical note:
+
+- Total network pressure is roughly song-level workers × per-song connections.
+- Tune `--workers` according to your target server capacity.
 
 Compatibility note:
 
@@ -88,6 +111,9 @@ CSV columns include:
 - `URL` (canonical where available)
 - `SourceInput` (original raw value from your file/CLI)
 - `Title`, `BPM`, `Key`, `Loudness`
+- `DurationSeconds`, `RmsEnergy`
+- `Danceability`, `Valence`
+- `SpectralCentroidHz`, `ZeroCrossingRate`
 
 ## Common options
 
@@ -146,3 +172,9 @@ python -m youtube_audio_pipeline.benchmark \
   --urls-file youtube_audio_pipeline/urls.benchmark.example.txt \
   --keep-run-csv
 ```
+
+## Credits
+
+This project is made possible by the Essentia library:
+
+- http://essentia.upf.edu

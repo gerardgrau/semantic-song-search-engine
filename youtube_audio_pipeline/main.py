@@ -115,7 +115,11 @@ def run_pipeline(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Download YouTube audio to RAM disk and extract BPM/Key/Loudness to CSV."
+        description=(
+            "Download YouTube audio to RAM disk and extract musical features "
+            "(BPM, Key, Loudness, Duration, RMS, Danceability, Valence, "
+            "SpectralCentroid, ZeroCrossingRate) to CSV."
+        )
     )
     parser.add_argument(
         "--urls-file",
