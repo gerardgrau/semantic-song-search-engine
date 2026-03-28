@@ -149,15 +149,15 @@
 │       ├── voice_instrumental-msd-musicnn-1.[json, onnx, pb]
 │       └── voice_instrumental-openl3-music-mel128-emb512-1.[json, onnx, pb]
 ├── classifiers/
-│   ├── danceability, fs_loop_ds, gender, genre_{dortmund, electronic, rosamerica, tzanetakis}, mood_{acoustic, aggressive, electronic, happy, party, relaxed, sad}, moods_mirex, tonal_atonal, urbansound8k, voice_instrumental}/
-│   │   ├── {classifier}-musicnn-msd-{1, 2}-tfjs.zip
-│   │   ├── {classifier}-musicnn-msd-{1, 2}.[json, pb]
-│   │   ├── {classifier}-musicnn-mtt-{1, 2}-tfjs.zip
-│   │   ├── {classifier}-musicnn-mtt-{1, 2}.[json, pb]
-│   │   ├── {classifier}-vgg-msd-2.[json, pb]
-│   │   ├── {classifier}-vgg-mtt-2.[json, pb]
-│   │   ├── {classifier}-vggish-audioset-1-tfjs.zip
-│   │   └── {classifier}-vggish-audioset-1.[json, pb]
+│   └── danceability, fs_loop_ds, gender, genre_{dortmund, electronic, rosamerica, tzanetakis}, mood_{acoustic, aggressive, electronic, happy, party, relaxed, sad}, moods_mirex, tonal_atonal, urbansound8k, voice_instrumental}/
+│       ├── {classifier}-musicnn-msd-{1, 2}-tfjs.zip
+│       ├── {classifier}-musicnn-msd-{1, 2}.[json, pb]
+│       ├── {classifier}-musicnn-mtt-{1, 2}-tfjs.zip
+│       ├── {classifier}-musicnn-mtt-{1, 2}.[json, pb]
+│       ├── {classifier}-vgg-msd-2.[json, pb]
+│       ├── {classifier}-vgg-mtt-2.[json, pb]
+│       ├── {classifier}-vggish-audioset-1-tfjs.zip
+│       └── {classifier}-vggish-audioset-1.[json, pb]
 ├── feature-extractors/
 │   ├── discogs-effnet/
 │   │   └── discogs-effnet-1.[json, onnx, pb]
@@ -192,11 +192,11 @@
 │   └── spleeter/
 │       └── spleeter-{2s, 4s, 5s}-3.[json, pb]
 └── tempo/
-    ├── tempocnn/
-    │   ├── LICENSE
-    │   ├── deepsquare-k16-3-tfjs.zip
-    │   ├── deepsquare-k16-3.[json, pb]
-    │   ├── deeptemp-k4-3-tfjs.zip
-    │   ├── deeptemp-k4-3.[json, pb]
-    │   ├── deeptemp-k16-3-tfjs.zip
-    │   └── deeptemp-k16-3.[json, pb]
+    └── tempocnn/
+        ├── LICENSE
+        ├── deepsquare-k16-3-tfjs.zip
+        ├── deepsquare-k16-3.[json, pb]
+        ├── deeptemp-k4-3-tfjs.zip
+        ├── deeptemp-k4-3.[json, pb]
+        ├── deeptemp-k16-3-tfjs.zip
+        └── deeptemp-k16-3.[json, pb]
