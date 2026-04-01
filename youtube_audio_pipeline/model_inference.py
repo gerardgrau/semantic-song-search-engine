@@ -1,11 +1,8 @@
 """
-Essentia TensorFlow Model Inference (Enriched Version)
+Essentia TensorFlow Model Inference (High-Performance with Batching)
 
-Uses a multi-task approach for Mood/Theme and adds enrichment heads for:
-- Instrumentation (40 classes)
-- Voice/Instrumental (binary)
-- Voice Gender (male/female)
-- Timbre (bright/dark)
+Optimized for high-throughput with Singleton Session Management and 
+multi-track vectorized batching support.
 """
 
 from __future__ import annotations
@@ -25,14 +22,13 @@ logger = logging.getLogger(__name__)
 # Global model instances
 _models_lock = threading.Lock()
 _PREPROCESSOR: Any = None
-_BACKBONE_GRAPH: Any = None
-_HEAD_GRAPHS: dict[str, Any] = {}
+_BACKBONE_SESS: tf.compat.v1.Session = None
+_HEAD_SESSIONS: dict[str, tuple[tf.compat.v1.Session, str, str, list[str]]] = {}
 _METADATA: dict[str, Any] = {}
 _models_initialized = False
 
 MODELS_DIR = Path(__file__).parent / "models"
 
-# Updated Registry with multi-task and enrichment models
 MODEL_REGISTRY = {
     "backbone": "discogs-effnet-1.pb",
     "genre": "genre_discogs400-discogs-effnet-1.pb",
@@ -48,37 +44,6 @@ def _load_frozen_graph(pb_path: Path) -> tf.GraphDef:
         graph_def = tf.compat.v1.GraphDef()
         graph_def.ParseFromString(f.read())
     return graph_def
-
-def _ensure_models_loaded() -> None:
-    global _PREPROCESSOR, _BACKBONE_GRAPH, _HEAD_GRAPHS, _METADATA, _models_initialized
-
-    if _models_initialized: return
-
-    with _models_lock:
-        if _models_initialized: return
-
-        logger.info(f"Loading enriched models from {MODELS_DIR}")
-        _PREPROCESSOR = es.TensorflowInputMusiCNN()
-        
-        for key, filename in MODEL_REGISTRY.items():
-            path = MODELS_DIR / filename
-            if path.exists():
-                graph_def = _load_frozen_graph(path)
-                if key == "backbone":
-                    _BACKBONE_GRAPH = graph_def
-                else:
-                    _HEAD_GRAPHS[key] = graph_def
-                
-                meta_path = path.with_name(filename.replace(".pb", "_metadata.json"))
-                if meta_path.exists():
-                    with open(meta_path, "r") as f:
-                        _METADATA[key] = json.load(f)
-                logger.info(f"✓ {key} loaded")
-
-        _models_initialized = True
-
-def initialize_models_globally() -> None:
-    _ensure_models_loaded()
 
 def _find_tensors(graph: tf.Graph):
     placeholders = [t.name for op in graph.get_operations() if op.type == "Placeholder" for t in op.outputs]
@@ -104,105 +69,131 @@ def _find_tensors(graph: tf.Graph):
     
     return primary_input, primary_output, placeholders
 
-def _run_with_discovery(graph_def: tf.GraphDef, input_value: np.ndarray) -> np.ndarray:
-    with tf.Graph().as_default() as g:
-        tf.import_graph_def(graph_def, name="model")
-        inp_name, out_name, all_placeholders = _find_tensors(g)
-        
-        with tf.compat.v1.Session(graph=g) as sess:
-            feed_dict = {inp_name: input_value}
-            for p in all_placeholders:
-                if p != inp_name:
-                    tensor = g.get_tensor_by_name(p)
-                    if tensor.dtype == tf.string: feed_dict[p] = b""
-                    elif tensor.dtype in [tf.float32, tf.float64]: feed_dict[p] = 0.0
-                    else: feed_dict[p] = 0
-            
-            return sess.run(out_name, feed_dict=feed_dict)
+def _ensure_models_loaded() -> None:
+    global _PREPROCESSOR, _BACKBONE_SESS, _HEAD_SESSIONS, _METADATA, _models_initialized
 
-def run_full_inference(audio: np.ndarray) -> dict[str, Any]:
-    _ensure_models_loaded()
-    results = {
-        "genre": {}, 
-        "mood_theme": {}, 
-        "instrumentation": {},
-        "voice_instrumental": {},
-        "voice_gender": {},
-        "timbre": {},
-        "embedding": None
-    }
-    if _BACKBONE_GRAPH is None: return results
+    if _models_initialized: return
 
-    try:
-        resampler = es.Resample(inputSampleRate=44100, outputSampleRate=16000)
-        audio_16k = resampler(audio)
+    with _models_lock:
+        if _models_initialized: return
 
-        mel_frames = []
-        for frame in es.FrameGenerator(audio_16k, frameSize=512, hopSize=256, startFromZero=True):
-            mel_frames.append(_PREPROCESSOR(frame).flatten())
+        logger.info(f"Initializing High-Performance Inference Engine from {MODELS_DIR}")
+        _PREPROCESSOR = es.TensorflowInputMusiCNN()
         
-        if not mel_frames: return results
-        mel_data = np.array(mel_frames)
-        
-        patch_size, hop_size = 128, 64
-        patches = []
-        for i in range(0, len(mel_data) - patch_size + 1, hop_size):
-            patches.append(mel_data[i:i+patch_size])
-        
-        if not patches:
-            pad_len = patch_size - len(mel_data)
-            patches.append(np.pad(mel_data, ((0, pad_len), (0, 0)), mode='constant'))
-
-        batch_size = 64
-        all_embeddings = []
-        for i in range(0, len(patches), batch_size):
-            batch = patches[i:i+batch_size]
-            actual_len = len(batch)
-            if actual_len < batch_size:
-                for _ in range(batch_size - actual_len): batch.append(batch[-1])
-            
-            embeddings = _run_with_discovery(_BACKBONE_GRAPH, np.array(batch))
-            all_embeddings.append(embeddings[:actual_len])
+        for key, filename in MODEL_REGISTRY.items():
+            path = MODELS_DIR / filename
+            if path.exists():
+                graph_def = _load_frozen_graph(path)
+                graph = tf.Graph()
+                with graph.as_default():
+                    tf.import_graph_def(graph_def, name="model")
+                    inp, out, phelds = _find_tensors(graph)
+                    sess = tf.compat.v1.Session(graph=graph)
+                    
+                    if key == "backbone":
+                        _BACKBONE_SESS = sess
+                    else:
+                        _HEAD_SESSIONS[key] = (sess, inp, out, phelds)
                 
-        track_embedding = np.mean(np.concatenate(all_embeddings, axis=0), axis=0, keepdims=True)
-        results["embedding"] = track_embedding.flatten()
+                meta_path = path.with_name(filename.replace(".pb", "_metadata.json"))
+                if meta_path.exists():
+                    with open(meta_path, "r") as f:
+                        _METADATA[key] = json.load(f)
+                logger.info(f"✓ {key} model initialized")
 
-        for key, graph_def in _HEAD_GRAPHS.items():
-            logits = _run_with_discovery(graph_def, track_embedding)
+        _models_initialized = True
+
+def initialize_models_globally() -> None:
+    _ensure_models_loaded()
+
+def _run_sess(sess: tf.compat.v1.Session, inp_name: str, out_name: str, phelds: list[str], val: np.ndarray) -> np.ndarray:
+    graph = sess.graph
+    feed_dict = {inp_name: val}
+    for p in phelds:
+        if p != inp_name:
+            tensor = graph.get_tensor_by_name(p)
+            if tensor.dtype == tf.string: feed_dict[p] = b""
+            elif tensor.dtype in [tf.float32, tf.float64]: feed_dict[p] = 0.0
+            else: feed_dict[p] = 0
+    return sess.run(out_name, feed_dict=feed_dict)
+
+def preprocess_audio(audio_16k: np.ndarray) -> np.ndarray:
+    """Converts 16kHz audio to mel patches [n, 128, 96]."""
+    _ensure_models_loaded()
+    mel_frames = [_PREPROCESSOR(f).flatten() for f in es.FrameGenerator(audio_16k, frameSize=512, hopSize=256, startFromZero=True)]
+    if not mel_frames: return np.array([])
+    mel_data = np.array(mel_frames)
+    
+    patch_size, hop_size = 128, 64
+    patches = [mel_data[i:i+patch_size] for i in range(0, len(mel_data) - patch_size + 1, hop_size)]
+    if not patches:
+        patches = [np.pad(mel_data, ((0, patch_size - len(mel_data)), (0, 0)), mode='constant')]
+    return np.array(patches)
+
+def run_full_inference(audio_16k: np.ndarray) -> dict[str, Any]:
+    """Single-track high-performance inference."""
+    patches = preprocess_audio(audio_16k)
+    if patches.size == 0: return {k: {} for k in MODEL_REGISTRY if k != "backbone"}
+    
+    # Wrap patches into a list format for batch runner
+    batch_results = run_batch_inference([patches])
+    return batch_results[0]
+
+def run_batch_inference(list_of_patches: list[np.ndarray]) -> list[dict[str, Any]]:
+    """
+    Vectorized batch inference across multiple tracks.
+    Efficiently packs patches from all tracks into batches of 64.
+    """
+    _ensure_models_loaded()
+    if not list_of_patches: return []
+    if _BACKBONE_SESS is None: return [{k: {} for k in MODEL_REGISTRY if k != "backbone"} for _ in list_of_patches]
+
+    # 1. Flatten all patches into one big list and keep track of indices
+    all_patches = []
+    track_patch_ranges = []
+    current_idx = 0
+    for patches in list_of_patches:
+        count = len(patches)
+        all_patches.extend(patches)
+        track_patch_ranges.append((current_idx, current_idx + count))
+        current_idx += count
+
+    # 2. Backbone Inference (Batch Size 64)
+    batch_size = 64
+    all_embs = []
+    inp_b, out_b, phelds_b = _find_tensors(_BACKBONE_SESS.graph)
+    
+    for i in range(0, len(all_patches), batch_size):
+        batch = all_patches[i:i+batch_size]
+        actual_len = len(batch)
+        if actual_len < batch_size:
+            # Pad batch with copies of the last patch
+            batch = list(batch) # ensure list
+            for _ in range(batch_size - actual_len): batch.append(batch[-1])
+        
+        embs = _run_sess(_BACKBONE_SESS, inp_b, out_b, phelds_b, np.array(batch))
+        all_embs.append(embs[:actual_len])
+    
+    combined_embs = np.concatenate(all_embs, axis=0)
+
+    # 3. Aggregate Embeddings per Track and Run Heads
+    final_results = []
+    for start, end in track_patch_ranges:
+        track_patches_embs = combined_embs[start:end]
+        track_embedding = np.mean(track_patches_embs, axis=0, keepdims=True)
+        
+        res: dict[str, Any] = {"embedding": track_embedding.flatten()}
+        
+        # Heads Inference (one track at a time for now, as heads are extremely fast)
+        for key, (sess, inp, out, phelds) in _HEAD_SESSIONS.items():
+            logits = _run_sess(sess, inp, out, phelds, track_embedding)
             probs = logits.flatten()
             labels = _METADATA.get(key, {}).get("classes", [])
-            
             if labels:
-                results[key] = {labels[i]: float(probs[i]) for i in range(min(len(labels), len(probs)))}
+                res[key] = {labels[i]: float(probs[i]) for i in range(min(len(labels), len(probs)))}
             else:
-                # Fallback for binary heads if classes missing
-                results[key] = {"score": float(probs[0])}
-
-    except Exception as e:
-        logger.error(f"Inference failed: {e}")
+                res[key] = {"score": float(probs[0])}
         
-    return results
+        final_results.append(res)
 
-# High-level API for analyzer.py
-def run_genre_inference(audio: np.ndarray, sr: int = 44100) -> dict[str, float]:
-    return run_full_inference(audio)["genre"]
-
-def run_mood_inference(audio: np.ndarray, sr: int = 44100) -> dict[str, float]:
-    # Bridges to the new multi-task results
-    return run_full_inference(audio)["mood_theme"]
-
-def run_instrument_inference(audio: np.ndarray, sr: int = 44100) -> dict[str, float]:
-    return run_full_inference(audio)["instrumentation"]
-
-def run_voice_inference(audio: np.ndarray, sr: int = 44100) -> dict[str, Any]:
-    res = run_full_inference(audio)
-    return {
-        "voice_instrumental": res["voice_instrumental"],
-        "voice_gender": res["voice_gender"]
-    }
-
-def run_timbre_inference(audio: np.ndarray, sr: int = 44100) -> dict[str, float]:
-    return run_full_inference(audio)["timbre"]
-
-def run_embedding_inference(audio: np.ndarray, sr: int = 44100) -> np.ndarray | None:
-    return run_full_inference(audio)["embedding"]
+    return final_results

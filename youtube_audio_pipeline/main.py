@@ -3,20 +3,15 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+import queue
+import threading
 from pathlib import Path
 
-from youtube_audio_pipeline.analyzer import analyze_and_discard, save_to_dataframe
+from youtube_audio_pipeline.analyzer import extract_base_features, finalize_song_data, save_to_dataframe
 from youtube_audio_pipeline.downloader import download_to_ram
-from youtube_audio_pipeline.youtube_utils import (
-    canonical_watch_url,
-    extract_video_id,
-    normalize_youtube_input,
-)
+from youtube_audio_pipeline.youtube_utils import normalize_youtube_input
 from youtube_audio_pipeline import model_inference
-
-# Pipeline Version Tracking
-PIPELINE_VERSION = "1.2.0"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,192 +19,131 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def load_urls(urls_file: str) -> list[dict[str, str | None]]:
     urls = []
     urls_path = Path(urls_file)
-    if not urls_path.exists():
-        return []
-
+    if not urls_path.exists(): return []
     with open(urls_path, "r") as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#"):
-                continue
+            if not line or line.startswith("#"): continue
             url, video_id = normalize_youtube_input(line)
             urls.append({"url": url, "youtube_id": video_id, "source_input": line})
     return urls
 
+def format_duration(seconds: float) -> str:
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    if hours > 0: return f"{hours}h {minutes}m {secs}s"
+    elif minutes > 0: return f"{minutes}m {secs}s"
+    else: return f"{secs}s"
 
-def process_single_url(
-    entry: dict[str, str | None], ram_disk_path: str, skip_models: bool = False
-) -> dict | None:
-    url = entry.get("url")
-    if not url:
-        return None
-
-    source_input = entry.get("source_input") or url
-    
-    success, filepath, metadata = download_to_ram(url=url, ram_disk_path=ram_disk_path)
-    if not success or metadata is None:
-        return None
-
-    filepath_obj = Path(filepath)
-    song_data = analyze_and_discard(
-        filepath=filepath_obj, 
-        metadata=metadata,
-        skip_models=skip_models
-    )
-    
-    if filepath_obj.exists():
-        filepath_obj.unlink()
-
-    if song_data is None:
-        return None
-
-    song_data["SourceInput"] = source_input
-    return song_data
-
-
-def run_pipeline(
+def run_production_pipeline(
     urls: list[dict[str, str | None]],
     output_csv: str,
     ram_disk_path: str = "/dev/shm/yt_audio",
-    workers: int = 8,
-    flush_every: int = 200,
+    num_analyzers: int = 4,
+    ml_batch_size: int = 4,
     skip_models: bool = False,
 ) -> tuple[int, int]:
-    if not urls:
-        print("No URLs provided.")
-        return 0, 0
-
-    workers = max(1, workers)
-    workers = min(workers, max(1, os.cpu_count() or 1))
-
+    if not urls: return 0, 0
+    total_count = len(urls)
+    start_time = time.time()
+    
+    download_queue = queue.Queue(maxsize=10)
+    inference_queue = queue.Queue(maxsize=ml_batch_size * 2)
     processed_count = 0
-    saved_count = 0
-    batch_results: list[dict[str, object]] = []
+    
+    def downloader_worker():
+        for url_entry in urls:
+            success, filepath, metadata = download_to_ram(url_entry['url'], ram_disk_path)
+            if success: download_queue.put((filepath, metadata, url_entry['source_input']))
+            else: download_queue.put(None)
+        for _ in range(num_analyzers): download_queue.put("DONE")
 
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {
-            executor.submit(process_single_url, url_entry, ram_disk_path, skip_models): url_entry 
-            for url_entry in urls
-        }
+    def analyzer_worker():
+        while True:
+            item = download_queue.get()
+            if item == "DONE": break
+            if item is None: continue
+            filepath, metadata, source_input = item
+            filepath_obj = Path(filepath)
+            base_res = extract_base_features(filepath_obj, metadata)
+            if filepath_obj.exists(): filepath_obj.unlink()
+            if base_res:
+                base_data, audio_16k = base_res
+                base_data["SourceInput"] = source_input
+                inference_queue.put((base_data, audio_16k))
+        inference_queue.put("DONE")
 
-        for idx, future in enumerate(as_completed(future_map), start=1):
-            url_entry = future_map[future]
-            source_input = url_entry.get("source_input") or url_entry.get("url") or "unknown"
+    def inference_manager():
+        nonlocal processed_count
+        active_analyzers = num_analyzers
+        pending_batch = []
+        while active_analyzers > 0:
             try:
-                song_data = future.result()
-                if song_data:
-                    processed_count += 1
-                    batch_results.append(song_data)
-                    print(
-                        f"[{idx}/{len(urls)}] ✅ Processed: {song_data['Title']} | "
-                        f"BPM: {song_data.get('BPM', 0.0):.1f} | Key: {song_data.get('Key', 'N/A')}"
-                    )
-                else:
-                    print(f"[{idx}/{len(urls)}] ⚠️ Skipped URL/Input: {source_input}")
+                item = inference_queue.get(timeout=1)
+                if item == "DONE":
+                    active_analyzers -= 1
+                    continue
+                pending_batch.append(item)
+                if len(pending_batch) >= ml_batch_size:
+                    _run_batch(pending_batch)
+                    processed_count += len(pending_batch)
+                    pending_batch = []
+            except queue.Empty:
+                if pending_batch:
+                    _run_batch(pending_batch)
+                    processed_count += len(pending_batch)
+                    pending_batch = []
 
-                if len(batch_results) >= flush_every:
-                    save_to_dataframe(batch_results, output_csv=output_csv)
-                    saved_count += len(batch_results)
-                    batch_results.clear()
-            except Exception as exc:
-                print(f"[{idx}/{len(urls)}] ❌ Unhandled error for {source_input} | Error: {exc}")
-                logger.exception("Unexpected error in pipeline:")
+    def _run_batch(batch):
+        all_patches = [model_inference.preprocess_audio(audio_16k) for _, audio_16k in batch]
+        ml_batch_results = model_inference.run_batch_inference(all_patches)
+        completed_rows = []
+        for i, (base_data, _) in enumerate(batch):
+            final_row = finalize_song_data(base_data, ml_batch_results[i])
+            completed_rows.append(final_row)
+            print(f"✅ Processed: {final_row['Title']}")
+        save_to_dataframe(completed_rows, output_csv)
 
-    if batch_results:
-        save_to_dataframe(batch_results, output_csv=output_csv)
-        saved_count += len(batch_results)
-        batch_results.clear()
-
-    return processed_count, saved_count
-
-
-def build_parser() -> argparse.ArgumentParser:
-    default_output = f"data/processed/youtube_song_characteristics_v{PIPELINE_VERSION}.csv"
-    parser = argparse.ArgumentParser(
-        description=(
-            f"Download YouTube audio to RAM disk and extract musical features "
-            f"(Pipeline v{PIPELINE_VERSION})"
-        )
-    )
-    parser.add_argument(
-        "--urls-file",
-        type=str,
-        default="youtube_audio_pipeline/urls.example.txt",
-        help="Path to a text file with one YouTube URL per line.",
-    )
-    parser.add_argument(
-        "--url",
-        action="append",
-        help="Optional URL argument; can be repeated.",
-    )
-    parser.add_argument(
-        "--output-csv",
-        type=str,
-        default=default_output,
-        help=f"Destination CSV path (default: {default_output}).",
-    )
-    parser.add_argument(
-        "--ram-disk-path",
-        type=str,
-        default="/dev/shm/yt_audio",
-        help="RAM path for temporary audio files.",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=8,
-        help="Number of concurrent workers.",
-    )
-    parser.add_argument(
-        "--flush-every",
-        type=int,
-        default=10,
-        help="Flush results to CSV every N songs.",
-    )
-    parser.add_argument(
-        "--skip-models",
-        action="store_true",
-        help="Skip ML model inference.",
-    )
-    return parser
-
+    d_thread = threading.Thread(target=downloader_worker)
+    a_threads = [threading.Thread(target=analyzer_worker) for _ in range(num_analyzers)]
+    i_thread = threading.Thread(target=inference_manager)
+    d_thread.start()
+    for t in a_threads: t.start()
+    i_thread.start()
+    d_thread.join()
+    for t in a_threads: t.join()
+    i_thread.join()
+    
+    total_time = time.time() - start_time
+    print(f"\nProduction Pipeline finished in {format_duration(total_time)}.")
+    return processed_count, processed_count
 
 def main() -> None:
-    parser = build_parser()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--urls-file", type=str, default="youtube_audio_pipeline/urls.example.txt")
+    parser.add_argument("--url", action="append")
+    parser.add_argument("--output-csv", type=str, default="data/processed/youtube_song_characteristics.csv")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--skip-models", action="store_true")
     args = parser.parse_args()
 
     urls = []
     if args.url:
         for u in args.url:
-            norm_url, vid_id = normalize_youtube_input(u)
-            urls.append({"url": norm_url, "youtube_id": vid_id, "source_input": u})
-
+            u_norm, vid_id = normalize_youtube_input(u)
+            urls.append({"url": u_norm, "youtube_id": vid_id, "source_input": u})
     if args.urls_file and os.path.exists(args.urls_file):
         urls.extend(load_urls(args.urls_file))
 
-    if not urls:
-        print("Error: No URLs found. Provide --url or a valid --urls-file.")
-        return
+    if not urls: return
+    if not args.skip_models: model_inference.initialize_models_globally()
 
-    if not args.skip_models:
-        print(f"Initializing Essentia models (Pipeline v{PIPELINE_VERSION})...")
-        model_inference.initialize_models_globally()
-        print("✓ Models ready")
-
-    processed_count, saved_count = run_pipeline(
-        urls=urls,
-        output_csv=args.output_csv,
-        ram_disk_path=args.ram_disk_path,
-        workers=args.workers,
-        flush_every=args.flush_every,
-        skip_models=args.skip_models,
-    )
-    print(f"Finished. Successfully processed: {processed_count}. Rows saved: {saved_count}.")
-
+    run_production_pipeline(urls, args.output_csv, num_analyzers=args.workers, ml_batch_size=args.batch_size, skip_models=args.skip_models)
 
 if __name__ == "__main__":
     main()

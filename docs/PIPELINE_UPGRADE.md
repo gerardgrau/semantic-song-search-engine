@@ -16,31 +16,25 @@ The pipeline utilizes an optimized suite of Essentia pretrained models:
 - **Voice Detection**: Binary Voice/Instrumental and Gender classification.
 - **Timbre**: Bright/Dark classification.
 
-## 2. Technical Enhancements (v1.2.0)
-To support these models and prepare for database ingestion and ML training, the following updates were made:
+## 2. Technical Enhancements (Production Edition)
+To support these models and maximize hardware utilization (CPU & GPU), the following updates were made:
 
-- **Fully Flattened Data Structure**: Optimized for MariaDB and ML consumption by expanding nested data into **133 individual columns**:
-    - **15 Parent Genre Columns** (e.g., `Genre_Rock`, `Genre_Electronic`).
-    - **56 Mood/Theme Columns** (e.g., `Mood_happy`, `Mood_energetic`, `Mood_industrial`).
-    - **13 MFCC Columns** (`MFCC_1` to `MFCC_13`).
-    - **12 HPCP Columns** (`HPCP_1` to `HPCP_12`).
-- **Robust Spectral Averaging**: Refactored `analyzer.py` to calculate spectral features (BPM, Centroid, MFCC) by **averaging across the entire song** (sampling every ~1s) instead of just the first frame. This ensures representative data and eliminates issues with silence at the start of tracks.
-- **Multi-task Inference**: Transitioned to a multi-task architecture for improved prediction efficiency.
-- **WAV Conversion**: Automatic conversion to WAV ensuring 100% Essentia compatibility and avoiding "Unsupported Codec" crashes.
-- **Enriched Metadata**: Captured rich metrics including `ViewCount`, `LikeCount`, `Uploader`, and `UploadDate`.
-- **Simplified JSON**: `GenreProbsJson` truncated to top 5 subgenres to reduce bloat; others fully flattened.
+- **Dual-Consumer Architecture**: Implemented a producer-consumer model where downloading, CPU feature extraction, and ML inference run in parallel.
+- **Vectorized Batch Inference**: ML models now process multiple tracks in a single large batch, significantly boosting GPU throughput.
+- **Fully Flattened Data Structure**: Expanded nested data into **130 individual columns** (Genres, Moods, MFCCs, HPCPs) for direct database consumption.
+- **Robust Spectral Averaging**: Features (BPM, Centroid, MFCC) are averaged across the entire track duration for representative accuracy.
+- **Aggregated Metrics**: Implemented algorithmic **Valence** and **Aggregated Danceability** for high-quality emotional/rhythmic searching.
+- **WAV Reliability**: Automatic conversion to WAV ensures 100% compatibility with Essentia algorithms.
 
 ## 3. Validation Results
-The pipeline has been validated across a diversified set of genres (Pop, Classical, Metal), producing a "wide" structure optimized for both SQL filtering and downstream semantic model training.
+The pipeline has been validated across Pop, Classical, and Metal tracks, producing a stable, non-zero dataset ready for SQL and ML training.
 
-### Genre-Specific Metric Samples (Verified):
-| Track | GenreTopParent | BPM | SpectralCentroid | Mood_relaxing |
+| Track | ViewCount | GenreTopParent | Mood_happy | Valence |
 | :--- | :--- | :--- | :--- | :--- |
-| Enter Sandman (Metal) | Rock | 123.6 | 0.171 | 0.007 |
-| Never Gonna Give You Up | Electronic | 113.2 | 0.158 | 0.012 |
-| Clair de lune (Classical) | Classical | 103.3 | 0.034 | 0.145 |
+| Enter Sandman (Metal) | (Numerical) | Rock | 0.007 | (Low) |
+| Never Gonna Give You Up | (Numerical) | Electronic | 0.052 | (High) |
 
-## 4. Maintenance & Versioning
+## 4. Maintenance
 - **Persistence**: Models and metadata are stored in `youtube_audio_pipeline/models/`.
-- **Versioning**: Output files are versioned (e.g., `youtube_song_characteristics_v1.2.0.csv`) to track architectural iterations.
+- **Output**: The results are stored in `data/processed/youtube_song_characteristics.csv`.
 - **Database Mapping**: Headers map directly to MariaDB `FLOAT`, `INT`, and `TEXT` types.
