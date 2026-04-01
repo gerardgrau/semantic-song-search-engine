@@ -1,4 +1,4 @@
-# Put one YouTube URL per line.
-# Lines that start with # are ignored.
-
+# Diversified Test Set
 https://www.youtube.com/watch?v=dQw4w9WgXcQ
+https://www.youtube.com/watch?v=ANTzmjUPW80
+https://www.youtube.com/watch?v=97_VJve7UVc

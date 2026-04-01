@@ -16,18 +16,23 @@ from youtube_audio_pipeline import model_inference
 
 logger = logging.getLogger(__name__)
 
-# Core moods/themes to flatten into columns for easy querying
-FLATTENED_MOODS = [
-    "happy", "sad", "dark", "energetic", "relaxing", 
-    "melodic", "emotional", "party", "romantic", 
-    "summer", "upbeat", "calm"
-]
-
 # High-level parent genres from Discogs taxonomy
 FLATTENED_GENRES = [
     "Blues", "Brass & Military", "Children's", "Classical", "Electronic", 
     "Folk, World, & Country", "Funk / Soul", "Hip Hop", "Jazz", "Latin", 
     "Non-Music", "Pop", "Reggae", "Rock", "Stage & Screen"
+]
+
+# Full 56 mood/theme tags from MTG-Jamendo
+ALL_MOODS = [
+    "action", "adventure", "advertising", "background", "ballad", "calm", "children", 
+    "christmas", "commercial", "cool", "corporate", "dark", "deep", "documentary", 
+    "drama", "dramatic", "dream", "emotional", "energetic", "epic", "fast", "film", 
+    "fun", "funny", "game", "groovy", "happy", "heavy", "holiday", "hopeful", 
+    "inspiring", "love", "meditative", "melancholic", "melodic", "motivational", 
+    "movie", "nature", "party", "positive", "powerful", "relaxing", "retro", 
+    "romantic", "sad", "sexy", "slow", "soft", "soundscape", "space", "sport", 
+    "summer", "trailer", "travel", "upbeat", "uplifting"
 ]
 
 def analyze_and_discard(
@@ -72,116 +77,113 @@ def analyze_and_discard(
         danceability, _ = danceability_extractor(audio)
         valence = 0.0 
 
-        # Spectral features
-        zcr = es.ZeroCrossingRate()(audio)
-        
-        mfcc_json = "[]"
-        hpcp_json = "[]"
-        spec_centroid = 0.0
-        spec_rolloff = 0.0
-        spec_flatness = 0.0
-        pitch_mean = 0.0
-        pitch_std = 0.0
-
-        try:
-            w = es.Windowing(type="hann")
-            fft = es.FFT()
-            frame = audio[:1024]
-            if len(frame) < 1024: frame = np.pad(frame, (0, 1024 - len(frame)))
-            
-            pitch_extractor = es.PitchYinFFT()
-            pitches = []
-            for f in es.FrameGenerator(audio, frameSize=2048, hopSize=1024):
-                p_spec = fft(w(f))
-                p, c = pitch_extractor(p_spec)
-                if c > 0.5: pitches.append(p)
-            pitch_mean = float(np.mean(pitches)) if pitches else 0.0
-            pitch_std = float(np.std(pitches)) if pitches else 0.0
-
-            mag = np.abs(fft(w(frame))).astype(np.float32)
-            spec_centroid = float(es.Centroid()(mag))
-            spec_rolloff = float(es.RollOff()(mag))
-            spec_flatness = float(es.Flatness()(mag))
-            
-            _, mfcc_coeffs = es.MFCC()(mag)
-            mfcc_json = json.dumps(mfcc_coeffs.tolist())
-            hpcp_coeffs = es.HPCP()(mag)
-            hpcp_json = json.dumps(hpcp_coeffs.tolist())
-        except Exception as e:
-            logger.debug(f"Spectral feature extraction failed: {e}")
-
         # 2. Extract ML Model Features
-        mood_theme_flat = {f"Mood_{m}": 0.0 for m in FLATTENED_MOODS}
+        mood_theme_flat = {f"Mood_{m}": 0.0 for m in ALL_MOODS}
         genre_parent_flat = {f"Genre_{g.replace(' ', '').replace(',', '').replace('&', 'And').replace('/', 'Or')}": 0.0 for g in FLATTENED_GENRES}
         
+        genre_top_label, genre_top_confidence = "Unknown", 0.0
+        genre_top_parent = "Unknown"
+        genre_probs_json = "{}"
+        top_moods_str, top_inst_str = "", ""
+        voice_inst_label, gender_label, timbre_label = "unknown", "unknown", "unknown"
+        embedding_json = "[]"
+
         if not skip_models:
             full_res = model_inference.run_full_inference(audio)
-            
-            # Parse Genre (with aggregation and simplification)
             genre_probs = full_res["genre"]
             if genre_probs:
-                # Top specific label
                 genre_top_label, genre_top_confidence = max(genre_probs.items(), key=lambda x: x[1])
-                
-                # Aggregate by Parent
                 parent_scores = {}
                 for label, score in genre_probs.items():
                     parent = label.split("---")[0]
                     parent_scores[parent] = parent_scores.get(parent, 0.0) + score
-                
-                # Top Parent
                 genre_top_parent = max(parent_scores.items(), key=lambda x: x[1])[0]
-                
-                # Flatten Parent Genres
                 for g in FLATTENED_GENRES:
                     col_name = f"Genre_{g.replace(' ', '').replace(',', '').replace('&', 'And').replace('/', 'Or')}"
-                    if g in parent_scores:
-                        genre_parent_flat[col_name] = float(parent_scores[g])
-                
-                # Truncate specific JSON to top 5
+                    if g in parent_scores: genre_parent_flat[col_name] = float(parent_scores[g])
                 top_5_specific = dict(sorted(genre_probs.items(), key=lambda x: x[1], reverse=True)[:5])
                 genre_probs_json = json.dumps(top_5_specific)
-            else:
-                genre_top_label, genre_top_confidence = "Unknown", 0.0
-                genre_top_parent = "Unknown"
-                genre_probs_json = "{}"
             
-            # Parse Mood & Theme (Multi-task)
             mood_theme_probs = full_res["mood_theme"]
             top_moods = sorted(mood_theme_probs.items(), key=lambda x: x[1], reverse=True)[:5]
-            top_moods_str = ", ".join([f"{m} ({s:.2f})" for m, s in top_moods])
-            
-            # Flatten selected moods
-            for m in FLATTENED_MOODS:
-                if m in mood_theme_probs:
-                    mood_theme_flat[f"Mood_{m}"] = float(mood_theme_probs[m])
+            top_moods_str = " | ".join([f"{m} ({s:.2f})" for m, s in top_moods])
+            for m in ALL_MOODS:
+                if m in mood_theme_probs: mood_theme_flat[f"Mood_{m}"] = float(mood_theme_probs[m])
             
             inst_probs = full_res["instrumentation"]
             top_inst = sorted(inst_probs.items(), key=lambda x: x[1], reverse=True)[:3]
-            top_inst_str = ", ".join([f"{i} ({s:.2f})" for i, s in top_inst])
+            top_inst_str = " | ".join([f"{i} ({s:.2f})" for i, s in top_inst])
             
             voice_res = full_res["voice_instrumental"]
             voice_inst_label = max(voice_res.items(), key=lambda x: x[1])[0] if voice_res else "unknown"
-            
             gender_res = full_res["voice_gender"]
             gender_label = max(gender_res.items(), key=lambda x: x[1])[0] if gender_res else "unknown"
-            
-            # Parse Timbre
             timbre_res = full_res["timbre"]
             timbre_label = max(timbre_res.items(), key=lambda x: x[1])[0] if timbre_res else "unknown"
             
-            # Embedding
             embedding = full_res["embedding"]
             embedding_json = json.dumps(embedding.tolist()) if embedding is not None else "[]"
-        else:
-            genre_top_label, genre_top_confidence, genre_probs_json = "Unknown", 0.0, "{}"
-            genre_top_parent = "Unknown"
-            mood_theme_probs = {}
-            top_moods_str, top_inst_str = "", ""
-            voice_inst_label, gender_label, timbre_label = "unknown", "unknown", "unknown"
-            embedding_json = "[]"
 
-        # 3. Combine results
+        # 3. Spectral Features (Robust Extraction)
+        mfcc_flat = {f"MFCC_{i+1}": 0.0 for i in range(13)}
+        hpcp_flat = {f"HPCP_{i+1}": 0.0 for i in range(12)}
+        centroids, rolloffs, flatness = [], [], []
+        mfccs = []
+        pitches = []
+
+        try:
+            w = es.Windowing(type="hann")
+            fft = es.FFT()
+            centroid_alg = es.Centroid()
+            rolloff_alg = es.RollOff()
+            flatness_alg = es.Flatness()
+            mfcc_alg = es.MFCC(numberCoefficients=13)
+            pitch_alg = es.PitchYinFFT()
+            
+            # Frame generator loop
+            for frame in es.FrameGenerator(audio, frameSize=2048, hopSize=sample_rate):
+                spec = fft(w(frame))
+                mag = np.abs(spec).astype(np.float32)
+                
+                # Granular extraction to avoid whole-block failure
+                try: centroids.append(centroid_alg(mag))
+                except: pass
+                
+                try: rolloffs.append(rolloff_alg(mag))
+                except: pass
+                
+                try: flatness.append(flatness_alg(mag))
+                except: pass
+                
+                try:
+                    _, m_coeffs = mfcc_alg(mag)
+                    mfccs.append(m_coeffs)
+                except: pass
+                
+                try:
+                    p, c = pitch_alg(spec)
+                    if c > 0.5: pitches.append(p)
+                except: pass
+
+            # Averages
+            spec_centroid = float(np.mean(centroids)) if centroids else 0.0
+            spec_rolloff = float(np.mean(rolloffs)) if rolloffs else 0.0
+            spec_flatness = float(np.mean(flatness)) if flatness else 0.0
+            pitch_mean = float(np.mean(pitches)) if pitches else 0.0
+            pitch_std = float(np.std(pitches)) if pitches else 0.0
+            
+            if mfccs:
+                avg_mfcc = np.mean(mfccs, axis=0)
+                for i, val in enumerate(avg_mfcc): mfcc_flat[f"MFCC_{i+1}"] = float(val)
+                
+        except Exception as e:
+            logger.debug(f"Averaged spectral extraction failed: {e}")
+            spec_centroid, spec_rolloff, spec_flatness = 0.0, 0.0, 0.0
+            pitch_mean, pitch_std = 0.0, 0.0
+
+        zcr = float(es.ZeroCrossingRate()(audio))
+
+        # 4. Result
         result = {
             "URL": url,
             "Title": title,
@@ -208,25 +210,24 @@ def analyze_and_discard(
             "SpectralFlatness": spec_flatness,
             "PitchMeanHz": pitch_mean,
             "PitchStdHz": pitch_std,
-            "ZeroCrossingRate": float(zcr),
-            "MfccMeanJson": mfcc_json,
-            "HpcpMeanJson": hpcp_json,
+            "ZeroCrossingRate": zcr,
             "GenreTopLabel": genre_top_label,
             "GenreTopParent": genre_top_parent,
             "GenreTopConfidence": genre_top_confidence,
-            "GenreProbsJson": genre_probs_json,
             "MoodThemeSummary": top_moods_str,
-            "MoodThemeProbsJson": json.dumps(mood_theme_probs),
             "InstrumentationSummary": top_inst_str,
             "VoiceInstrumental": voice_inst_label,
             "VoiceGender": gender_label,
             "Timbre": timbre_label,
-            "DiscogsEmbeddingJson": embedding_json,
         }
         
-        # Add flattened columns
         result.update(mood_theme_flat)
         result.update(genre_parent_flat)
+        result.update(mfcc_flat)
+        result.update(hpcp_flat)
+        
+        result["GenreProbsJson"] = genre_probs_json
+        result["DiscogsEmbeddingJson"] = embedding_json
 
         return result
 

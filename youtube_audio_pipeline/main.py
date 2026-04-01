@@ -15,6 +15,9 @@ from youtube_audio_pipeline.youtube_utils import (
 )
 from youtube_audio_pipeline import model_inference
 
+# Pipeline Version Tracking
+PIPELINE_VERSION = "1.2.0"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -47,12 +50,10 @@ def process_single_url(
 
     source_input = entry.get("source_input") or url
     
-    # download_to_ram now returns (success, filepath, metadata_dict)
     success, filepath, metadata = download_to_ram(url=url, ram_disk_path=ram_disk_path)
     if not success or metadata is None:
         return None
 
-    # Use metadata from downloader
     filepath_obj = Path(filepath)
     song_data = analyze_and_discard(
         filepath=filepath_obj, 
@@ -60,7 +61,6 @@ def process_single_url(
         skip_models=skip_models
     )
     
-    # Cleanup after analysis
     if filepath_obj.exists():
         filepath_obj.unlink()
 
@@ -128,10 +128,11 @@ def run_pipeline(
 
 
 def build_parser() -> argparse.ArgumentParser:
+    default_output = f"data/processed/youtube_song_characteristics_v{PIPELINE_VERSION}.csv"
     parser = argparse.ArgumentParser(
         description=(
-            "Download YouTube audio to RAM disk and extract musical features "
-            "with enriched ML models."
+            f"Download YouTube audio to RAM disk and extract musical features "
+            f"(Pipeline v{PIPELINE_VERSION})"
         )
     )
     parser.add_argument(
@@ -148,8 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-csv",
         type=str,
-        default="data/processed/youtube_song_characteristics.csv",
-        help="Destination CSV path.",
+        default=default_output,
+        help=f"Destination CSV path (default: {default_output}).",
     )
     parser.add_argument(
         "--ram-disk-path",
@@ -195,7 +196,7 @@ def main() -> None:
         return
 
     if not args.skip_models:
-        print("Initializing Essentia models (genre, mood, embeddings, etc.)...")
+        print(f"Initializing Essentia models (Pipeline v{PIPELINE_VERSION})...")
         model_inference.initialize_models_globally()
         print("✓ Models ready")
 
