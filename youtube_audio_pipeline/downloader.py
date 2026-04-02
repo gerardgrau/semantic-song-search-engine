@@ -10,7 +10,7 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
-# Global "Circuit Breaker" - If cookies fail once, we stop trying them to save time
+# Global "Circuit Breaker"
 _COOKIES_ENABLED = True
 
 def ensure_ram_path(ram_disk_path: str = "/dev/shm/yt_audio") -> Path:
@@ -30,7 +30,7 @@ def download_to_ram(
     cookies_path: str | None = None
 ) -> tuple[bool, str | None, dict | None]:
     """
-    Self-Healing Downloader with Circuit Breaker.
+    Peak-Resiliency Downloader with iOS/Android client bypass.
     """
     global _COOKIES_ENABLED
     ram_path = ensure_ram_path(ram_disk_path)
@@ -46,11 +46,18 @@ def download_to_ram(
         "external_downloader": "aria2c",
         "external_downloader_args": ["-x", "16", "-s", "16", "-k", "1M"],
         "js_runtime": "node",
+        # BYPASS: Tell YouTube we are an iPhone/Android app to get higher limits
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["ios", "android", "web"],
+                "skip": ["dash", "hls"]
+            }
+        },
         "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
         "postprocessor_args": ["-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le"],
     }
 
-    # Attempt 1: With Cookies (only if provided and not previously failed)
+    # Attempt 1: With Cookies (if provided and enabled)
     if cookies_path and os.path.exists(cookies_path) and _COOKIES_ENABLED:
         opts_with_cookies = base_opts.copy()
         opts_with_cookies["cookiefile"] = cookies_path
@@ -59,11 +66,10 @@ def download_to_ram(
                 info = ydl.extract_info(url, download=True)
                 return True, str(ram_path / f"{unique_id}.wav"), _parse_meta(info, url)
         except Exception as e:
-            # CIRCUIT BREAKER: Disable cookies for the rest of this execution
             _COOKIES_ENABLED = False
-            logger.warning(f"Cookie-run failed. Circuit broken! Switching to naked downloads for the rest of the run. Error: {e}")
+            logger.warning(f"Cookies failed. Switching to High-Limit Mobile client. Error: {e}")
 
-    # Attempt 2: Naked Download (The "Safe" Fallback)
+    # Attempt 2: Naked Mobile Download (The "Safe" Fallback)
     try:
         with yt_dlp.YoutubeDL(base_opts) as ydl:
             info = ydl.extract_info(url, download=True)
