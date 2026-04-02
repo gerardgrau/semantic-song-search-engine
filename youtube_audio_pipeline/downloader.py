@@ -27,14 +27,13 @@ def download_to_ram(
     cookies_path: str | None = None
 ) -> tuple[bool, str | None, dict | None]:
     """
-    Final Stable Downloader: Clean, resilient, and JS-aware.
+    Self-Healing Downloader: Tries with cookies first, then falls back to naked download.
     """
     ram_path = ensure_ram_path(ram_disk_path)
-    
     unique_id = str(uuid.uuid4())
     temp_template = str(ram_path / f"{unique_id}.%(ext)s")
 
-    ydl_opts = {
+    base_opts = {
         "format": "bestaudio/best", 
         "outtmpl": temp_template,
         "quiet": True,
@@ -42,44 +41,42 @@ def download_to_ram(
         "noplaylist": True,
         "external_downloader": "aria2c",
         "external_downloader_args": ["-x", "16", "-s", "16", "-k", "1M"],
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "wav",
-        }],
-        "postprocessor_args": [
-            "-ar", "16000",
-            "-ac", "1",
-            "-acodec", "pcm_s16le"
-        ],
+        "js_runtime": "node",
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
+        "postprocessor_args": ["-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le"],
     }
-    
-    # Enable JS Runtime if node is available
-    ydl_opts["js_runtime"] = "node"
 
-    # Only add cookiefile if explicitly provided and valid
+    # Attempt 1: With Cookies (if provided)
     if cookies_path and os.path.exists(cookies_path):
-        ydl_opts["cookiefile"] = cookies_path
+        opts_with_cookies = base_opts.copy()
+        opts_with_cookies["cookiefile"] = cookies_path
+        try:
+            with yt_dlp.YoutubeDL(opts_with_cookies) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return True, str(ram_path / f"{unique_id}.wav"), _parse_meta(info, url)
+        except Exception as e:
+            logger.warning(f"Cookie-run failed for {url}, attempting naked download... Error: {e}")
 
+    # Attempt 2: Naked Download (The "Safe" Fallback)
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(base_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            filepath = str(ram_path / f"{unique_id}.wav")
-            
-            metadata = {
-                "id": info.get("id"),
-                "title": info.get("title", "Unknown Title"),
-                "url": info.get("webpage_url") or url,
-                "uploader": info.get("uploader"),
-                "channel": info.get("channel"),
-                "upload_date": info.get("upload_date"),
-                "view_count": info.get("view_count", 0),
-                "like_count": info.get("like_count", 0),
-                "duration": info.get("duration"),
-                "categories": info.get("categories", []),
-                "tags": info.get("tags", []),
-            }
-            
-            return True, filepath, metadata
+            return True, str(ram_path / f"{unique_id}.wav"), _parse_meta(info, url)
     except Exception as e:
-        logger.warning(f"Download failed for {url}: {e}")
+        logger.error(f"Download failed critically for {url}: {e}")
         return False, None, None
+
+def _parse_meta(info: dict, original_url: str) -> dict:
+    return {
+        "id": info.get("id"),
+        "title": info.get("title", "Unknown Title"),
+        "url": info.get("webpage_url") or original_url,
+        "uploader": info.get("uploader"),
+        "channel": info.get("channel"),
+        "upload_date": info.get("upload_date"),
+        "view_count": info.get("view_count", 0),
+        "like_count": info.get("like_count", 0),
+        "duration": info.get("duration"),
+        "categories": info.get("categories", []),
+        "tags": info.get("tags", []),
+    }
