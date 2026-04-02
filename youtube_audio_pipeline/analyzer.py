@@ -39,16 +39,19 @@ ALL_MOODS = [
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
-def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = False, skip_pitch: bool = False) -> tuple[dict, np.ndarray | None] | None:
+def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_models: bool = False, skip_pitch: bool = False) -> tuple[dict, np.ndarray | None] | None:
     """
     Stage 1: Optimized feature extraction at 16kHz.
     """
     try:
         sample_rate = 16000
         
-        # Load audio at 16kHz
-        loader = es.MonoLoader(filename=str(filepath), sampleRate=sample_rate)
-        audio = loader()
+        if isinstance(input_data, np.ndarray):
+            audio = input_data
+        else:
+            # Load audio at 16kHz
+            loader = es.MonoLoader(filename=str(input_data), sampleRate=sample_rate)
+            audio = loader()
 
         # 1. Rhythm & Beats
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")

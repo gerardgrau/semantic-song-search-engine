@@ -6,7 +6,7 @@ import os
 import time
 import queue
 import threading
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from youtube_audio_pipeline.analyzer import extract_base_features, finalize_song_data, save_to_dataframe
@@ -44,8 +44,8 @@ def run_turbo_pipeline(
     urls: list[dict[str, str | None]],
     output_csv: str,
     ram_disk_path: str = "/dev/shm/yt_audio",
-    num_downloaders: int = 4, # Parallel downloads
-    num_analyzers: int = 6,   # CPU cores
+    num_downloaders: int = 4,
+    num_analyzers: int = 6,
     ml_batch_size: int = 16,
     skip_models: bool = False,
     skip_pitch: bool = False,
@@ -54,30 +54,54 @@ def run_turbo_pipeline(
     total_count = len(urls)
     start_time = time.time()
     
+    # 1. Parallel Metadata Pre-Fetching (Hides network latency)
+    print(f"📡 Pre-fetching metadata for {total_count} songs...")
+    metadata_results = []
+    with ThreadPoolExecutor(max_workers=10) as meta_pool:
+        def fetch_meta(u_entry):
+            import yt_dlp
+            try:
+                with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True}) as ydl:
+                    info = ydl.extract_info(u_entry['url'], download=False)
+                    return info, u_entry['source_input']
+            except:
+                return None, u_entry['source_input']
+        metadata_results = list(meta_pool.map(fetch_meta, urls))
+    
+    print(f"✅ Metadata complete. Starting Turbo Run...")
+    
     # Queues
-    # Use maxsize to prevent downloading too many songs and filling RAM
     inference_queue = queue.Queue(maxsize=ml_batch_size * 2)
     processed_count = 0
     
-    # 1. Parallel Downloaders (ThreadPool is fine here as it's I/O bound)
-    def download_task(url_entry):
-        return download_to_ram(url_entry['url'], ram_disk_path), url_entry['source_input']
-
-    # 2. Inference Manager (Consumes from the analyzer results)
+    # 2. Adaptive Inference Manager (Heartbeat-based batching)
     def inference_manager(total_to_process):
         nonlocal processed_count
         pending_batch = []
         received = 0
+        last_inference_time = time.time()
+        
         while received < total_to_process:
-            item = inference_queue.get()
-            received += 1
-            if item is None: continue
-            
-            pending_batch.append(item)
-            if len(pending_batch) >= ml_batch_size:
-                _run_batch(pending_batch)
-                processed_count += len(pending_batch)
-                pending_batch = []
+            try:
+                item = inference_queue.get(timeout=1.0)
+                received += 1
+                if item is not None:
+                    pending_batch.append(item)
+            except queue.Empty:
+                if pending_batch:
+                    _run_batch(pending_batch)
+                    processed_count += len(pending_batch)
+                    pending_batch = []
+                    last_inference_time = time.time()
+                continue
+
+            # Batch logic: Either the bucket is full, or the heartbeat timeout (2s) reached
+            if len(pending_batch) >= ml_batch_size or (time.time() - last_inference_time > 2.0):
+                if pending_batch:
+                    _run_batch(pending_batch)
+                    processed_count += len(pending_batch)
+                    pending_batch = []
+                    last_inference_time = time.time()
         
         if pending_batch:
             _run_batch(pending_batch)
@@ -103,52 +127,56 @@ def run_turbo_pipeline(
         
         save_to_dataframe(completed_rows, output_csv)
 
-    # 3. Master Execution Flow
-    # We use a ThreadPool for downloads and a ProcessPool for analysis
-    # NOTE: Essentia objects cannot be easily pickled for ProcessPool, 
-    # so we keep analysis in threads but SCALE the downloaders.
-    
-    print(f"🚀 Launching Turbo Pipeline: {num_downloaders} Downloaders | {num_analyzers} Analyzers")
-    
-    with ThreadPoolExecutor(max_workers=num_downloaders + num_analyzers) as executor:
-        # Start Inference Manager in background
-        inf_thread = threading.Thread(target=inference_manager, args=(total_count,))
-        inf_thread.start()
-        
-        # Helper to analyze and push to queue
-        def analyze_and_queue(download_res, source_input):
-            success, filepath, metadata = download_res
-            if not success or not filepath:
-                inference_queue.put(None)
-                return
-            
-            filepath_obj = Path(filepath)
-            res = extract_base_features(filepath_obj, metadata, skip_models, skip_pitch)
-            if filepath_obj.exists(): filepath_obj.unlink()
-            
-            if res:
-                base_data, ml_patches = res
-                base_data["SourceInput"] = source_input
-                inference_queue.put((base_data, ml_patches))
-            else:
-                inference_queue.put(None)
+    # 3. Unified Execution Pool (Decoupled Download/Analysis)
+    inf_thread = threading.Thread(target=inference_manager, args=(total_count,))
+    inf_thread.start()
 
-        # Download Queue
+    with ThreadPoolExecutor(max_workers=num_downloaders + num_analyzers) as pool:
+        # Step A: Downloaders (Submitting all tasks to the pool)
         download_futures = []
-        for url_entry in urls:
-            f = executor.submit(download_task, url_entry)
+        for meta_res in metadata_results:
+            info, source_input = meta_res
+            if not info:
+                inference_queue.put(None)
+                continue
+            
+            def d_task(u, s):
+                return download_to_ram(u, ram_disk_path), s
+            
+            f = pool.submit(d_task, info['webpage_url'], source_input)
             download_futures.append(f)
             
-        # As downloads finish, submit to analyzer pool
-        analysis_futures = []
-        for f in as_completed(download_futures):
-            download_res, source_input = f.result()
-            # Submit to analyzer part of the pool
-            af = executor.submit(analyze_and_queue, download_res, source_input)
-            analysis_futures.append(af)
+        # Step B: Analyzers (Triggered as downloads complete)
+        for df in as_completed(download_futures):
+            download_res, source_input = df.result()
+            success, filepath, metadata = download_res
             
-        inf_thread.join()
+            if not success or not filepath:
+                inference_queue.put(None)
+                continue
+            
+            def a_task(fp, meta, src):
+                res = extract_base_features(Path(fp), meta, skip_models, skip_pitch)
+                if Path(fp).exists(): Path(fp).unlink()
+                if res:
+                    base_data, patches = res
+                    base_data["SourceInput"] = src
+                    return (base_data, patches)
+                return None
+            
+            # Submit analysis task
+            af = pool.submit(a_task, filepath, metadata, source_input)
+            
+            # Callback to feed the inference manager
+            def push_to_inf(fut):
+                try:
+                    inference_queue.put(fut.result())
+                except:
+                    inference_queue.put(None)
+            
+            af.add_done_callback(push_to_inf)
 
+    inf_thread.join()
     total_time = time.time() - start_time
     print(f"\nTurbo Pipeline finished in {format_duration(total_time)}.")
     return processed_count, processed_count
