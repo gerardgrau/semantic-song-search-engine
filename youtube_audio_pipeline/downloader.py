@@ -27,10 +27,11 @@ def download_to_ram(
     ram_disk_path: str = "/dev/shm/yt_audio",
 ) -> tuple[bool, str | None, dict | None]:
     """
-    Downloads audio and returns (success, filepath, metadata_dict).
+    Downloads audio and resamples to 16kHz for high-performance analysis.
     """
     ram_path = ensure_ram_path(ram_disk_path)
 
+    # Force 16kHz at the download stage to save CPU later
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": str(ram_path / "%(id)s.%(ext)s"),
@@ -44,6 +45,10 @@ def download_to_ram(
             "preferredcodec": "wav",
             "preferredquality": "192",
         }],
+        "postprocessor_args": [
+            "-ar", "16000",  # Set sample rate to 16kHz
+            "-ac", "1"       # Convert to mono
+        ],
     }
 
     try:
@@ -67,39 +72,5 @@ def download_to_ram(
             
             return True, filepath, metadata
     except Exception as e:
-        logger.warning(f"Aria2 download failed for {url}, falling back to native: {e}")
-        fallback_opts = {
-            "format": "bestaudio/best",
-            "outtmpl": str(ram_path / "%(id)s.%(ext)s"),
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "wav",
-                "preferredquality": "192",
-            }],
-        }
-        try:
-            with yt_dlp.YoutubeDL(fallback_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filepath = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".wav"
-                
-                metadata = {
-                    "id": info.get("id"),
-                    "title": info.get("title", "Unknown Title"),
-                    "url": info.get("webpage_url") or url,
-                    "uploader": info.get("uploader"),
-                    "channel": info.get("channel"),
-                    "upload_date": info.get("upload_date"),
-                    "view_count": info.get("view_count", 0),
-                    "like_count": info.get("like_count", 0),
-                    "duration": info.get("duration"),
-                    "categories": info.get("categories", []),
-                    "tags": info.get("tags", []),
-                }
-                
-                return True, filepath, metadata
-        except Exception as exc:
-            print(f"❌ Download failed for {url} | Error: {exc}")
-            return False, None, None
+        logger.warning(f"Download failed for {url}: {e}")
+        return False, None, None
