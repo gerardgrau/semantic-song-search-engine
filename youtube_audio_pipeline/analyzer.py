@@ -5,290 +5,227 @@ import logging
 import os
 import subprocess
 import uuid
+import time
 from pathlib import Path
 
+import essentia
 import essentia.standard as es
 import numpy as np
 import pandas as pd
 
 from youtube_audio_pipeline import model_inference
 
+# SILENCE: Suppress noisy Essentia "No network created" warnings
+essentia.log.infoActive = False
+essentia.log.warningActive = False
+
 logger = logging.getLogger(__name__)
 
+# High-level parent genres from Discogs taxonomy
+FLATTENED_GENRES = [
+    "Blues", "Brass & Military", "Children's", "Classical", "Electronic", 
+    "Folk, World, & Country", "Funk / Soul", "Hip Hop", "Jazz", "Latin", 
+    "Non-Music", "Pop", "Reggae", "Rock", "Stage & Screen"
+]
 
-def _prepare_analysis_file(filepath: str) -> tuple[str, bool]:
-    source = Path(filepath)
-    if source.suffix.lower() == ".wav":
-        return str(source), False
-
-    converted = source.with_name(f"{source.stem}.{uuid.uuid4().hex}.analysis.wav")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-v",
-        "error",
-        "-i",
-        str(source),
-        "-ac",
-        "1",
-        "-ar",
-        "44100",
-        str(converted),
-    ]
-    subprocess.run(cmd, check=True)
-    return str(converted), True
-
+# Full 56 mood/theme tags from MTG-Jamendo
+ALL_MOODS = [
+    "action", "adventure", "advertising", "background", "ballad", "calm", "children", 
+    "christmas", "commercial", "cool", "corporate", "dark", "deep", "documentary", 
+    "drama", "dramatic", "dream", "emotional", "energetic", "epic", "fast", "film", 
+    "fun", "funny", "game", "groovy", "happy", "heavy", "holiday", "hopeful", 
+    "inspiring", "love", "meditative", "melancholic", "melodic", "motivational", 
+    "movie", "nature", "party", "positive", "powerful", "relaxing", "retro", 
+    "romantic", "sad", "sexy", "slow", "soft", "soundscape", "space", "sport", 
+    "summer", "trailer", "travel", "upbeat", "uplifting"
+]
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
-
-def _safe_mean(values: list[float]) -> float:
-    if not values:
-        return 0.0
-    return float(sum(values)) / len(values)
-
-
-def _safe_std(values: list[float], mean_value: float) -> float:
-    if not values:
-        return 0.0
-    variance = sum((value - mean_value) ** 2 for value in values) / len(values)
-    return float(variance ** 0.5)
-
-
-def _vector_mean(vectors: list[list[float]], size: int) -> list[float]:
-    if not vectors:
-        return [0.0] * size
-
-    totals = [0.0] * size
-    for vector in vectors:
-        for idx, value in enumerate(vector[:size]):
-            totals[idx] += float(value)
-
-    count = float(len(vectors))
-    return [total / count for total in totals]
-
-
-def _vector_std(vectors: list[list[float]], mean_vector: list[float], size: int) -> list[float]:
-    if not vectors:
-        return [0.0] * size
-
-    totals = [0.0] * size
-    for vector in vectors:
-        for idx, value in enumerate(vector[:size]):
-            delta = float(value) - mean_vector[idx]
-            totals[idx] += delta * delta
-
-    count = float(len(vectors))
-    return [(total / count) ** 0.5 for total in totals]
-
-
-def _round_vector(vector: list[float], decimals: int = 6) -> list[float]:
-    return [round(float(value), decimals) for value in vector]
-
-
-def _compute_frame_statistics(audio, sample_rate: int = 44100) -> dict[str, object]:
-    windowing = es.Windowing(type="hann")
-    spectrum = es.Spectrum()
-    centroid_algo = es.Centroid(range=sample_rate / 2)
-    zcr_algo = es.ZeroCrossingRate()
-    rolloff_algo = es.RollOff()
-    flatness_algo = es.FlatnessDB()
-    mfcc_algo = es.MFCC(numberCoefficients=13)
-    spectral_peaks_algo = es.SpectralPeaks()
-    hpcp_algo = es.HPCP(size=12)
-    pitch_algo = es.PitchYinFFT()
-
-    centroid_values: list[float] = []
-    zcr_values: list[float] = []
-    rolloff_values: list[float] = []
-    flatness_values: list[float] = []
-    pitch_values: list[float] = []
-    mfcc_vectors: list[list[float]] = []
-    hpcp_vectors: list[list[float]] = []
-
-    for frame in es.FrameGenerator(audio, frameSize=2048, hopSize=1024, startFromZero=True):
-        windowed = windowing(frame)
-        spec = spectrum(windowed)
-        centroid_values.append(float(centroid_algo(spec)))
-        zcr_values.append(float(zcr_algo(frame)))
-        rolloff_values.append(float(rolloff_algo(spec)))
-        flatness_values.append(float(flatness_algo(spec)))
-
-        _, mfcc_coeffs = mfcc_algo(spec)
-        mfcc_vectors.append([float(value) for value in mfcc_coeffs])
-
-        peak_frequencies, peak_magnitudes = spectral_peaks_algo(spec)
-        if len(peak_frequencies) > 0:
-            hpcp_values = hpcp_algo(peak_frequencies, peak_magnitudes)
-            hpcp_vectors.append([float(value) for value in hpcp_values])
-
-        pitch_hz, pitch_confidence = pitch_algo(spec)
-        if float(pitch_hz) > 0 and float(pitch_confidence) >= 0.1:
-            pitch_values.append(float(pitch_hz))
-
-    if not centroid_values:
-        return {
-            "spectral_centroid_hz": 0.0,
-            "zero_crossing_rate": 0.0,
-            "spectral_rolloff_hz": 0.0,
-            "spectral_flatness": 0.0,
-            "pitch_mean_hz": 0.0,
-            "pitch_std_hz": 0.0,
-            "mfcc_mean": [0.0] * 13,
-            "mfcc_std": [0.0] * 13,
-            "hpcp_mean": [0.0] * 12,
-        }
-
-    mfcc_mean = _vector_mean(mfcc_vectors, size=13)
-    mfcc_std = _vector_std(mfcc_vectors, mean_vector=mfcc_mean, size=13)
-    hpcp_mean = _vector_mean(hpcp_vectors, size=12)
-
-    pitch_mean_hz = _safe_mean(pitch_values)
-    pitch_std_hz = _safe_std(pitch_values, pitch_mean_hz)
-
-    return {
-        "spectral_centroid_hz": _safe_mean(centroid_values),
-        "zero_crossing_rate": _safe_mean(zcr_values),
-        "spectral_rolloff_hz": _safe_mean(rolloff_values),
-        "spectral_flatness": _safe_mean(flatness_values),
-        "pitch_mean_hz": pitch_mean_hz,
-        "pitch_std_hz": pitch_std_hz,
-        "mfcc_mean": _round_vector(mfcc_mean),
-        "mfcc_std": _round_vector(mfcc_std),
-        "hpcp_mean": _round_vector(hpcp_mean),
-    }
-
-
-def analyze_and_discard(filepath: str | None, url: str, title: str | None) -> dict[str, object] | None:
-    if not filepath or not os.path.exists(filepath):
-        return None
-
-    safe_title = title or "Unknown Title"
-    analysis_filepath = filepath
-    generated_temp = False
-
+def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_models: bool = False, skip_pitch: bool = False) -> tuple[dict, np.ndarray | None] | None:
+    """
+    Stage 1: Optimized feature extraction at 16kHz.
+    """
     try:
-        analysis_filepath, generated_temp = _prepare_analysis_file(filepath)
-        sample_rate = 44100
-        audio = es.MonoLoader(filename=analysis_filepath, sampleRate=sample_rate)()
-        duration_seconds = float(len(audio)) / sample_rate
+        sample_rate = 16000
+        
+        if isinstance(input_data, np.ndarray):
+            audio = input_data
+        else:
+            # Load audio at 16kHz
+            loader = es.MonoLoader(filename=str(input_data), sampleRate=sample_rate)
+            audio = loader()
 
+        # 1. Rhythm & Beats
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
-        bpm, ticks, confidence, _, _ = rhythm_extractor(audio)
+        bpm, beats, beats_confidence, _, _ = rhythm_extractor(audio)
+        beat_count = len(beats)
+        
+        # 2. Key & Energy
+        key, scale, strength = es.KeyExtractor()(audio)
+        overall_loudness = es.Loudness()(audio)
+        rms_energy = np.sqrt(np.mean(audio**2))
+        dance_alg_val, _ = es.Danceability()(audio)
 
-        key_extractor = es.KeyExtractor()
-        key, scale, key_strength = key_extractor(audio)
+        # 3. Spectral Loop (Unified for efficiency)
+        od_hfc = es.OnsetDetection(method="hfc")
+        w = es.Windowing(type="hann")
+        fft = es.FFT()
+        c2p = es.CartesianToPolar()
+        
+        det_func = []
+        centroids, rolloffs, flatness, mfccs, hpcps = [], [], [], [], []
+        mfcc_alg = es.MFCC(numberCoefficients=13, inputSize=513, sampleRate=sample_rate, highFrequencyBound=8000)
+        hpcp_alg = es.HPCP(sampleRate=sample_rate)
+        peaks_alg = es.SpectralPeaks(sampleRate=sample_rate)
 
-        loudness_algo = es.DynamicComplexity()
-        _, overall_loudness = loudness_algo(audio)
+        for frame in es.FrameGenerator(audio, frameSize=1024, hopSize=512):
+            mag, phs = c2p(fft(w(frame)))
+            det_func.append(od_hfc(mag, phs))
+            
+            # Sub-sample spectral averages (~1s interval)
+            if len(det_func) % 31 == 0:
+                m_f = mag.astype(np.float32)
+                centroids.append(es.Centroid()(m_f))
+                rolloffs.append(es.RollOff()(m_f))
+                flatness.append(es.Flatness()(m_f))
+                _, m_coeffs = mfcc_alg(m_f)
+                mfccs.append(m_coeffs)
+                f, m = peaks_alg(m_f)
+                hpcps.append(hpcp_alg(f, m))
 
-        rms_algo = es.RMS()
-        rms_energy = float(rms_algo(audio))
+        onset_times = es.Onsets()(essentia.array([det_func]), [1])
+        duration = len(audio) / sample_rate
 
-        frame_stats = _compute_frame_statistics(audio, sample_rate=sample_rate)
-        spectral_centroid_hz = float(frame_stats["spectral_centroid_hz"])
-        zero_crossing_rate = float(frame_stats["zero_crossing_rate"])
+        # 4. Parallel ML Preprocessing
+        ml_patches = None
+        if not skip_models:
+            ml_patches = model_inference.preprocess_audio(audio)
 
-        onset_rate_algo = es.OnsetRate()
-        onset_times, onset_rate = onset_rate_algo(audio)
-        beat_confidence = _clamp(float(confidence))
+        # 5. Pitch (Optional)
+        res_pitch = {"PitchMeanHz": 0.0, "PitchStdHz": 0.0}
+        if not skip_pitch:
+            try:
+                pitch_vals, pitch_conf = es.PredominantPitchMelodia(sampleRate=sample_rate)(audio)
+                valid = pitch_vals[pitch_conf > 0.3]
+                res_pitch["PitchMeanHz"] = float(np.mean(valid)) if len(valid) > 0 else 0.0
+                res_pitch["PitchStdHz"] = float(np.std(valid)) if len(valid) > 0 else 0.0
+            except: pass
 
-        bpm_norm = _clamp((float(bpm) - 70.0) / 90.0)
-        confidence_norm = beat_confidence
-        danceability_proxy = _clamp(0.55 * bpm_norm + 0.45 * confidence_norm)
-
-        major_flag = 1.0 if str(scale).lower() == "major" else 0.35
-        centroid_norm = _clamp(spectral_centroid_hz / 4000.0)
-        loudness_norm = _clamp((float(overall_loudness) + 45.0) / 45.0)
-        valence_proxy = _clamp(0.45 * major_flag + 0.35 * centroid_norm + 0.2 * loudness_norm)
-
-        # Run model inference for genre, mood, and embeddings
-        genre_probs = model_inference.run_genre_inference(audio, sr=sample_rate)
-        mood_probs = model_inference.run_mood_inference(audio, sr=sample_rate)
-        embedding = model_inference.run_embedding_inference(audio, sr=sample_rate)
-
-        # Extract top-1 genre and confidence
-        genre_top_label = "Unknown"
-        genre_top_confidence = 0.0
-        if genre_probs:
-            genre_top_label, genre_top_confidence = max(genre_probs.items(), key=lambda x: x[1])
-            genre_top_confidence = round(float(genre_top_confidence), 4)
-
-        # Extract mood confidences (default to 0.0 if not available)
-        mood_acoustic = round(float(mood_probs.get("acoustic", 0.0)), 4)
-        mood_aggressive = round(float(mood_probs.get("aggressive", 0.0)), 4)
-        mood_electronic = round(float(mood_probs.get("electronic", 0.0)), 4)
-        mood_happy = round(float(mood_probs.get("happy", 0.0)), 4)
-        mood_party = round(float(mood_probs.get("party", 0.0)), 4)
-        mood_relaxed = round(float(mood_probs.get("relaxed", 0.0)), 4)
-        mood_sad = round(float(mood_probs.get("sad", 0.0)), 4)
-
-        # Serialize results
-        genre_probs_json = json.dumps({str(k): float(v) for k, v in genre_probs.items()}) if genre_probs else "{}"
-        mood_probs_json = json.dumps({str(k): float(v) for k, v in mood_probs.items()}) if mood_probs else "{}"
-        embedding_json = json.dumps(embedding.tolist()) if embedding is not None else "[]"
-
-        return {
-            "URL": url,
-            "Title": safe_title,
-            "BPM": round(float(bpm), 1),
+        res = {
+            "YouTubeID": metadata.get("id", "Unknown"),
+            "Title": metadata.get("title", "Unknown"),
+            "Uploader": metadata.get("uploader", "Unknown"),
+            "Channel": metadata.get("channel", "Unknown"),
+            "UploadDate": metadata.get("upload_date", "Unknown"),
+            "URL": metadata.get("url", "Unknown"),
+            "ViewCount": int(metadata.get("view_count", 0)),
+            "LikeCount": int(metadata.get("like_count", 0)),
+            "BPM": float(bpm),
             "Key": f"{key} {scale}",
-            "KeyStrength": round(float(key_strength), 4),
-            "Loudness": round(float(overall_loudness), 2),
-            "DurationSeconds": round(duration_seconds, 2),
-            "RmsEnergy": round(rms_energy, 6),
-            "BeatConfidence": round(beat_confidence, 4),
-            "BeatCount": int(len(ticks)),
-            "OnsetRate": round(float(onset_rate), 6),
+            "Scale": str(scale),
+            "KeyStrength": float(strength),
+            "Loudness": float(overall_loudness),
+            "DurationSeconds": float(duration),
+            "RmsEnergy": float(rms_energy),
+            "BeatConfidence": float(beats_confidence),
+            "BeatCount": int(beat_count),
+            "OnsetRate": float(len(onset_times) / duration) if duration > 0 else 0.0,
             "OnsetCount": int(len(onset_times)),
-            "Danceability": round(danceability_proxy, 4),
-            "Valence": round(valence_proxy, 4),
-            "SpectralCentroidHz": round(spectral_centroid_hz, 2),
-            "SpectralRolloffHz": round(float(frame_stats["spectral_rolloff_hz"]), 2),
-            "SpectralFlatness": round(float(frame_stats["spectral_flatness"]), 6),
-            "PitchMeanHz": round(float(frame_stats["pitch_mean_hz"]), 2),
-            "PitchStdHz": round(float(frame_stats["pitch_std_hz"]), 2),
-            "ZeroCrossingRate": round(zero_crossing_rate, 6),
-            "MfccMeanJson": json.dumps(frame_stats["mfcc_mean"]),
-            "MfccStdJson": json.dumps(frame_stats["mfcc_std"]),
-            "HpcpMeanJson": json.dumps(frame_stats["hpcp_mean"]),
-            "GenreTopLabel": genre_top_label,
-            "GenreTopConfidence": genre_top_confidence,
-            "GenreProbsJson": genre_probs_json,
-            "MoodAcoustic": mood_acoustic,
-            "MoodAggressive": mood_aggressive,
-            "MoodElectronic": mood_electronic,
-            "MoodHappy": mood_happy,
-            "MoodParty": mood_party,
-            "MoodRelaxed": mood_relaxed,
-            "MoodSad": mood_sad,
-            "MoodProbsJson": mood_probs_json,
-            "DiscogsEmbeddingJson": embedding_json,
+            "RawDanceability": float(dance_alg_val),
+            "SpectralCentroidHz": float(np.mean(centroids)) if centroids else 0.0,
+            "SpectralRolloffHz": float(np.mean(rolloffs)) if rolloffs else 0.0,
+            "SpectralFlatness": float(np.mean(flatness)) if flatness else 0.0,
+            "ZeroCrossingRate": float(es.ZeroCrossingRate()(audio)),
+            "AvgMFCC": np.mean(mfccs, axis=0) if mfccs else np.zeros(13),
+            "AvgHPCP": np.mean(hpcps, axis=0) if hpcps else np.zeros(12),
         }
-    except Exception as exc:
-        print(f"❌ Analysis failed for {safe_title} | Error: {exc}")
+        res.update(res_pitch)
+        return res, ml_patches
+
+    except Exception as e:
+        logger.error(f"Base extraction failed: {e}")
         return None
-    finally:
-        try:
-            if generated_temp and analysis_filepath and os.path.exists(analysis_filepath):
-                os.remove(analysis_filepath)
-            if os.path.exists(filepath):
-                os.remove(filepath)
-        except OSError:
-            pass
 
+def finalize_song_data(base_data: dict, ml_res: dict) -> dict:
+    genre_probs = ml_res.get("genre", {})
+    genre_top_label, genre_top_confidence = "Unknown", 0.0
+    genre_top_parent = "Unknown"
+    genre_parent_flat = {f"Genre_{g.replace(' ', '').replace(',', '').replace('&', 'And').replace('/', 'Or')}": 0.0 for g in FLATTENED_GENRES}
+    
+    if genre_probs:
+        genre_top_label, genre_top_confidence = max(genre_probs.items(), key=lambda x: x[1])
+        parent_scores = {}
+        for label, score in genre_probs.items():
+            parent = label.split("---")[0]
+            parent_scores[parent] = parent_scores.get(parent, 0.0) + score
+        genre_top_parent = max(parent_scores.items(), key=lambda x: x[1])[0]
+        for g in FLATTENED_GENRES:
+            col_name = f"Genre_{g.replace(' ', '').replace(',', '').replace('&', 'And').replace('/', 'Or')}"
+            if g in parent_scores: genre_parent_flat[col_name] = float(parent_scores[g])
 
-def save_to_dataframe(results_list: list[dict[str, object]], output_csv: str = "data/processed/youtube_song_characteristics.csv") -> None:
-    if not results_list:
-        return
+    mood_theme_probs = ml_res.get("mood_theme", {})
+    mood_theme_flat = {f"Mood_{m}": 0.0 for m in ALL_MOODS}
+    for m in ALL_MOODS:
+        if m in mood_theme_probs: mood_theme_flat[f"Mood_{m}"] = float(mood_theme_probs[m])
 
+    major_flag = 1.0 if base_data["Scale"].lower() == "major" else 0.35
+    c_norm = _clamp(base_data["SpectralCentroidHz"] / 4000.0)
+    l_norm = _clamp((base_data["Loudness"] + 45.0) / 45.0)
+    valence = _clamp(0.45 * major_flag + 0.35 * c_norm + 0.2 * l_norm)
+    
+    m_party = mood_theme_flat.get("Mood_party", 0.0)
+    m_energetic = mood_theme_flat.get("Mood_energetic", 0.0)
+    danceability = _clamp(0.4 * base_data["RawDanceability"] + 0.3 * m_party + 0.2 * m_energetic + 0.1 * base_data["BeatConfidence"])
+
+    result = {
+        "YouTubeID": base_data["YouTubeID"],
+        "Title": base_data["Title"],
+        "Uploader": base_data["Uploader"],
+        "Channel": base_data["Channel"],
+        "UploadDate": base_data["UploadDate"],
+        "URL": base_data["URL"],
+        "ViewCount": base_data["ViewCount"],
+        "LikeCount": base_data["LikeCount"],
+        "BPM": base_data["BPM"],
+        "Key": base_data["Key"],
+        "KeyStrength": base_data["KeyStrength"],
+        "Loudness": base_data["Loudness"],
+        "DurationSeconds": base_data["DurationSeconds"],
+        "RmsEnergy": base_data["RmsEnergy"],
+        "BeatConfidence": base_data["BeatConfidence"],
+        "BeatCount": base_data["BeatCount"],
+        "OnsetRate": base_data["OnsetRate"],
+        "OnsetCount": base_data["OnsetCount"],
+        "Danceability": float(danceability),
+        "Valence": float(valence),
+        "SpectralCentroidHz": base_data["SpectralCentroidHz"],
+        "SpectralRolloffHz": base_data["SpectralRolloffHz"],
+        "SpectralFlatness": base_data["SpectralFlatness"],
+        "PitchMeanHz": base_data["PitchMeanHz"],
+        "PitchStdHz": base_data["PitchStdHz"],
+        "ZeroCrossingRate": base_data["ZeroCrossingRate"],
+        "GenreTopParent": genre_top_parent,
+        "GenreTopLabel": genre_top_label,
+        "GenreTopConfidence": genre_top_confidence,
+        "VoiceInstrumental": max(ml_res.get("voice_instrumental", {}).items(), key=lambda x: x[1])[0] if ml_res.get("voice_instrumental") else "unknown",
+        "VoiceGender": max(ml_res.get("voice_gender", {}).items(), key=lambda x: x[1])[0] if ml_res.get("voice_gender") else "unknown",
+        "Timbre": max(ml_res.get("timbre", {}).items(), key=lambda x: x[1])[0] if ml_res.get("timbre") else "unknown",
+    }
+    
+    result.update(mood_theme_flat)
+    result.update(genre_parent_flat)
+    for i, v in enumerate(base_data["AvgMFCC"]): result[f"MFCC_{i+1}"] = float(v)
+    for i, v in enumerate(base_data["AvgHPCP"]): result[f"HPCP_{i+1}"] = float(v)
+    result["GenreProbsJson"] = json.dumps(dict(sorted(genre_probs.items(), key=lambda x: x[1], reverse=True)[:5]))
+    result["DiscogsEmbeddingJson"] = json.dumps(ml_res["embedding"].tolist()) if ml_res.get("embedding") is not None else "[]"
+
+    return result
+
+def save_to_dataframe(results_list: list[dict], output_csv: str) -> None:
+    if not results_list: return
     output_path = Path(output_csv)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     df = pd.DataFrame(results_list)
-
-    if output_path.exists():
-        df.to_csv(output_path, mode="a", header=False, index=False)
-    else:
-        df.to_csv(output_path, index=False)
+    df.to_csv(output_path, mode="a", header=not output_path.exists(), index=False)
