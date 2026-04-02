@@ -46,13 +46,13 @@ def run_production_pipeline(
     num_analyzers: int = 4,
     ml_batch_size: int = 4,
     skip_models: bool = False,
+    skip_pitch: bool = False,
 ) -> tuple[int, int]:
     if not urls: return 0, 0
     total_count = len(urls)
     start_time = time.time()
     
     download_queue = queue.Queue(maxsize=10)
-    # The queue now holds (base_data, ml_patches)
     inference_queue = queue.Queue(maxsize=ml_batch_size * 2)
     processed_count = 0
     
@@ -64,7 +64,7 @@ def run_production_pipeline(
             else: download_queue.put(None)
         for _ in range(num_analyzers): download_queue.put("DONE")
 
-    # 2. Consumer 1: Parallel Base Extraction + Parallel ML Preprocessing
+    # 2. Consumer 1: Parallel Base Extraction
     def analyzer_worker():
         while True:
             item = download_queue.get()
@@ -74,8 +74,7 @@ def run_production_pipeline(
             filepath, metadata, source_input = item
             filepath_obj = Path(filepath)
             
-            # extract_base_features now returns (res_dict, ml_patches)
-            res = extract_base_features(filepath_obj, metadata, skip_models)
+            res = extract_base_features(filepath_obj, metadata, skip_models, skip_pitch)
             if filepath_obj.exists(): filepath_obj.unlink()
             
             if res:
@@ -84,7 +83,7 @@ def run_production_pipeline(
                 inference_queue.put((base_data, ml_patches))
         inference_queue.put("DONE")
 
-    # 3. Consumer 2: Batch ML Inference (Pure Matrix Math)
+    # 3. Consumer 2: Batch ML Inference
     def inference_manager():
         nonlocal processed_count
         active_analyzers = num_analyzers
@@ -109,26 +108,23 @@ def run_production_pipeline(
                     pending_batch = []
 
     def _run_batch(batch):
-        # ml_patches are already computed in parallel!
         list_of_patches = [item[1] for item in batch]
-        
-        # ML Inference
         if not skip_models:
             ml_batch_results = model_inference.run_batch_inference(list_of_patches)
         else:
-            ml_batch_results = [{} for _ in batch]
+            ml_batch_results = [{"embedding": None} for _ in batch]
         
-        # Merge and Save
         completed_rows = []
         for i, (base_data, _) in enumerate(batch):
             final_row = finalize_song_data(base_data, ml_batch_results[i])
             completed_rows.append(final_row)
             
-            # Calculate ETA
+            # Progress reporting
+            count = processed_count + i + 1
             elapsed = time.time() - start_time
-            avg = elapsed / (processed_count + i + 1)
-            eta = avg * (total_count - (processed_count + i + 1))
-            print(f"[{processed_count + i + 1}/{total_count}] ✅ Processed: {final_row['Title']} | ETA: {format_duration(eta)}")
+            avg = elapsed / count
+            eta = avg * (total_count - count)
+            print(f"[{count}/{total_count}] ✅ Processed: {final_row['Title']} | ETA: {format_duration(eta)}")
         
         save_to_dataframe(completed_rows, output_csv)
 
@@ -150,13 +146,14 @@ def run_production_pipeline(
     return processed_count, processed_count
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="YouTube Audio Pipeline Production v1.2.0")
     parser.add_argument("--urls-file", type=str, default="youtube_audio_pipeline/urls.example.txt")
     parser.add_argument("--url", action="append")
     parser.add_argument("--output-csv", type=str, default="data/processed/youtube_song_characteristics.csv")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--skip-models", action="store_true")
+    parser.add_argument("--skip-pitch", action="store_true", help="Skip heavy Melodia pitch detection.")
     args = parser.parse_args()
 
     urls = []
@@ -175,7 +172,8 @@ def main() -> None:
         args.output_csv, 
         num_analyzers=args.workers, 
         ml_batch_size=args.batch_size, 
-        skip_models=args.skip_models
+        skip_models=args.skip_models,
+        skip_pitch=args.skip_pitch
     )
 
 if __name__ == "__main__":

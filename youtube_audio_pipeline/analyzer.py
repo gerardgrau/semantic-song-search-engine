@@ -38,7 +38,7 @@ ALL_MOODS = [
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
-def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = False) -> tuple[dict, np.ndarray | None] | None:
+def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = False, skip_pitch: bool = False) -> tuple[dict, np.ndarray | None] | None:
     """
     Stage 1: CPU-intensive feature extraction + Parallel Mel-Preprocessing.
     """
@@ -50,6 +50,7 @@ def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = Fa
         # 1. Rhythm & Beats
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
         bpm, beats, beats_confidence, _, _ = rhythm_extractor(audio)
+        beat_count = len(beats)
 
         # 2. Onset Detection
         od_hfc = es.OnsetDetection(method="hfc")
@@ -96,7 +97,7 @@ def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = Fa
                 hpcps.append(hpcp_alg(f, m))
             except: pass
 
-        # 5. Parallel Mel-Preprocessing (Move 16kHz resampling and patch creation here)
+        # 5. Parallel Mel-Preprocessing
         ml_patches = None
         if not skip_models:
             audio_16k = es.Resample(inputSampleRate=sample_rate, outputSampleRate=16000)(audio)
@@ -120,7 +121,7 @@ def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = Fa
             "DurationSeconds": float(duration),
             "RmsEnergy": float(rms_energy),
             "BeatConfidence": float(beats_confidence),
-            "BeatCount": int(len(beats)),
+            "BeatCount": int(beat_count),
             "OnsetRate": float(onset_count / duration) if duration > 0 else 0.0,
             "OnsetCount": int(onset_count),
             "RawDanceability": float(dance_alg_val),
@@ -132,14 +133,16 @@ def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = Fa
             "AvgHPCP": np.mean(hpcps, axis=0) if hpcps else np.zeros(12),
         }
         
-        # Pitch (Heavy)
-        try:
-            pitch_vals, pitch_conf = es.PredominantPitchMelodia(sampleRate=sample_rate)(audio)
-            valid = pitch_vals[pitch_conf > 0.3]
-            res["PitchMeanHz"] = float(np.mean(valid)) if len(valid) > 0 else 0.0
-            res["PitchStdHz"] = float(np.std(valid)) if len(valid) > 0 else 0.0
-        except:
-            res["PitchMeanHz"], res["PitchStdHz"] = 0.0, 0.0
+        # 7. Pitch (Heavy, Optional)
+        res["PitchMeanHz"], res["PitchStdHz"] = 0.0, 0.0
+        if not skip_pitch:
+            try:
+                pitch_vals, pitch_conf = es.PredominantPitchMelodia(sampleRate=sample_rate)(audio)
+                valid = pitch_vals[pitch_conf > 0.3]
+                res["PitchMeanHz"] = float(np.mean(valid)) if len(valid) > 0 else 0.0
+                res["PitchStdHz"] = float(np.std(valid)) if len(valid) > 0 else 0.0
+            except:
+                pass
 
         return res, ml_patches
 
@@ -148,9 +151,6 @@ def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = Fa
         return None
 
 def finalize_song_data(base_data: dict, ml_res: dict) -> dict:
-    """
-    Stage 3: Merge base features with pre-computed ML results.
-    """
     # Parse Genre
     genre_probs = ml_res.get("genre", {})
     genre_top_label, genre_top_confidence = "Unknown", 0.0
