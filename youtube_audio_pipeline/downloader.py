@@ -10,6 +10,9 @@ import yt_dlp
 
 logger = logging.getLogger(__name__)
 
+# Global "Circuit Breaker" - If cookies fail once, we stop trying them to save time
+_COOKIES_ENABLED = True
+
 def ensure_ram_path(ram_disk_path: str = "/dev/shm/yt_audio") -> Path:
     preferred = Path(ram_disk_path)
     if preferred.parent.exists():
@@ -27,8 +30,9 @@ def download_to_ram(
     cookies_path: str | None = None
 ) -> tuple[bool, str | None, dict | None]:
     """
-    Self-Healing Downloader: Tries with cookies first, then falls back to naked download.
+    Self-Healing Downloader with Circuit Breaker.
     """
+    global _COOKIES_ENABLED
     ram_path = ensure_ram_path(ram_disk_path)
     unique_id = str(uuid.uuid4())
     temp_template = str(ram_path / f"{unique_id}.%(ext)s")
@@ -46,8 +50,8 @@ def download_to_ram(
         "postprocessor_args": ["-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le"],
     }
 
-    # Attempt 1: With Cookies (if provided)
-    if cookies_path and os.path.exists(cookies_path):
+    # Attempt 1: With Cookies (only if provided and not previously failed)
+    if cookies_path and os.path.exists(cookies_path) and _COOKIES_ENABLED:
         opts_with_cookies = base_opts.copy()
         opts_with_cookies["cookiefile"] = cookies_path
         try:
@@ -55,7 +59,9 @@ def download_to_ram(
                 info = ydl.extract_info(url, download=True)
                 return True, str(ram_path / f"{unique_id}.wav"), _parse_meta(info, url)
         except Exception as e:
-            logger.warning(f"Cookie-run failed for {url}, attempting naked download... Error: {e}")
+            # CIRCUIT BREAKER: Disable cookies for the rest of this execution
+            _COOKIES_ENABLED = False
+            logger.warning(f"Cookie-run failed. Circuit broken! Switching to naked downloads for the rest of the run. Error: {e}")
 
     # Attempt 2: Naked Download (The "Safe" Fallback)
     try:
