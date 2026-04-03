@@ -1,3 +1,2 @@
-# Keep directory structure, ignore processed datasets
-*
-!.gitignore
+/*.csv
+/*.json
