@@ -4,6 +4,7 @@ import os
 import tempfile
 import logging
 import uuid
+import time
 from pathlib import Path
 
 import yt_dlp
@@ -28,55 +29,69 @@ def download_to_ram(
     url: str,
     ram_disk_path: str = "/dev/shm/yt_audio",
     cookies_path: str | None = None
-) -> tuple[bool, str | None, dict | None]:
+) -> tuple[str, str | None, dict | None]:
     """
-    Peak-Resiliency Downloader with iOS/Android client bypass.
+    Stealth Downloader with Client Rotation.
+    Tries different YouTube player clients to find one that works.
     """
     global _COOKIES_ENABLED
     ram_path = ensure_ram_path(ram_disk_path)
-    unique_id = str(uuid.uuid4())
-    temp_template = str(ram_path / f"{unique_id}.%(ext)s")
+    
+    # We try these clients in order of guest-limit generosity
+    clients = ["ios", "android", "web"]
+    
+    last_error = ""
+    
+    for client in clients:
+        unique_id = str(uuid.uuid4())
+        temp_template = str(ram_path / f"{unique_id}.%(ext)s")
+        
+        ydl_opts = {
+            "format": "bestaudio/best", 
+            "outtmpl": temp_template,
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "noprogress": True,
+            "js_runtime": "node",
+            "extractor_args": {
+                "youtube": {
+                    "player_client": [client],
+                    "skip": ["dash", "hls"]
+                }
+            },
+            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
+            "postprocessor_args": ["-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le"],
+        }
 
-    base_opts = {
-        "format": "bestaudio/best", 
-        "outtmpl": temp_template,
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "external_downloader": "aria2c",
-        "external_downloader_args": ["-x", "16", "-s", "16", "-k", "1M"],
-        "js_runtime": "node",
-        # BYPASS: Tell YouTube we are an iPhone/Android app to get higher limits
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "web"],
-                "skip": ["dash", "hls"]
-            }
-        },
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "wav"}],
-        "postprocessor_args": ["-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le"],
-    }
+        # Check cookies
+        current_cookies = cookies_path if (_COOKIES_ENABLED and cookies_path and os.path.exists(cookies_path)) else None
+        if current_cookies:
+            ydl_opts["cookiefile"] = current_cookies
 
-    # Attempt 1: With Cookies (if provided and enabled)
-    if cookies_path and os.path.exists(cookies_path) and _COOKIES_ENABLED:
-        opts_with_cookies = base_opts.copy()
-        opts_with_cookies["cookiefile"] = cookies_path
         try:
-            with yt_dlp.YoutubeDL(opts_with_cookies) as ydl:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                return True, str(ram_path / f"{unique_id}.wav"), _parse_meta(info, url)
+                filepath = str(ram_path / f"{unique_id}.wav")
+                return "SUCCESS", filepath, _parse_meta(info, url)
         except Exception as e:
-            _COOKIES_ENABLED = False
-            logger.warning(f"Cookies failed. Switching to High-Limit Mobile client. Error: {e}")
+            err_str = str(e).lower()
+            last_error = err_str
+            
+            # If it is a bot challenge, we stop immediately to let main.py handle hibernate
+            if "confirm you’re not a bot" in err_str or "429" in err_str:
+                return "BOT_CHALLENGE", None, None
+            
+            # If it was a cookie error, disable them for the next client/run
+            if "cookie" in err_str and _COOKIES_ENABLED:
+                _COOKIES_ENABLED = False
+                logger.warning(f"Cookies failed for client {client}. Disabling for this session.")
+            
+            # Otherwise, just try the next client
+            continue
 
-    # Attempt 2: Naked Mobile Download (The "Safe" Fallback)
-    try:
-        with yt_dlp.YoutubeDL(base_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            return True, str(ram_path / f"{unique_id}.wav"), _parse_meta(info, url)
-    except Exception as e:
-        logger.error(f"Download failed critically for {url}: {e}")
-        return False, None, None
+    logger.warning(f"All clients failed for {url}. Last error: {last_error}")
+    return "ERROR", None, None
 
 def _parse_meta(info: dict, original_url: str) -> dict:
     return {

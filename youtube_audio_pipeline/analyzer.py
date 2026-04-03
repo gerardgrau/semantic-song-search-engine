@@ -3,9 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
-import uuid
-import time
 from pathlib import Path
 
 import essentia
@@ -15,7 +12,7 @@ import pandas as pd
 
 from youtube_audio_pipeline import model_inference
 
-# SILENCE: Suppress noisy Essentia "No network created" warnings
+# SILENCE: Suppress noisy Essentia internal warnings
 essentia.log.infoActive = False
 essentia.log.warningActive = False
 
@@ -43,9 +40,11 @@ ALL_MOODS = [
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
-def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_models: bool = False, skip_pitch: bool = False) -> tuple[dict, np.ndarray | None] | None:
+def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_models: bool = False) -> tuple[dict, np.ndarray | None] | None:
     """
-    Stage 1: Optimized feature extraction at 16kHz.
+    Stage 1: High-Fidelity feature extraction.
+    Prioritizes accuracy over speed by utilizing heavy-duty algorithms (Melodia)
+    and high-resolution spectral mapping.
     """
     try:
         sample_rate = 16000
@@ -53,11 +52,11 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         if isinstance(input_data, np.ndarray):
             audio = input_data
         else:
-            # Load audio at 16kHz
+            # High-Fidelity loading: Essentia handles resampling internally
             loader = es.MonoLoader(filename=str(input_data), sampleRate=sample_rate)
             audio = loader()
 
-        # 1. Rhythm & Beats
+        # 1. Rhythm & Beats (Advanced Multi-feature)
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
         bpm, beats, beats_confidence, _, _ = rhythm_extractor(audio)
         beat_count = len(beats)
@@ -68,7 +67,7 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         rms_energy = np.sqrt(np.mean(audio**2))
         dance_alg_val, _ = es.Danceability()(audio)
 
-        # 3. Spectral Loop (Unified for efficiency)
+        # 3. High-Resolution Spectral Mapping
         od_hfc = es.OnsetDetection(method="hfc")
         w = es.Windowing(type="hann")
         fft = es.FFT()
@@ -80,12 +79,13 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         hpcp_alg = es.HPCP(sampleRate=sample_rate)
         peaks_alg = es.SpectralPeaks(sampleRate=sample_rate)
 
+        # We average every 5 frames (~0.15s) for 6x more detail than before
+        frame_idx = 0
         for frame in es.FrameGenerator(audio, frameSize=1024, hopSize=512):
             mag, phs = c2p(fft(w(frame)))
             det_func.append(od_hfc(mag, phs))
             
-            # Sub-sample spectral averages (~1s interval)
-            if len(det_func) % 31 == 0:
+            if frame_idx % 5 == 0:
                 m_f = mag.astype(np.float32)
                 centroids.append(es.Centroid()(m_f))
                 rolloffs.append(es.RollOff()(m_f))
@@ -94,24 +94,22 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
                 mfccs.append(m_coeffs)
                 f, m = peaks_alg(m_f)
                 hpcps.append(hpcp_alg(f, m))
+            frame_idx += 1
 
         onset_times = es.Onsets()(essentia.array([det_func]), [1])
         duration = len(audio) / sample_rate
 
-        # 4. Parallel ML Preprocessing
+        # 4. Melodia Pitch Extraction (The Heavy-Duty Part)
+        # Slower but essential for high-fidelity harmonic data
+        pitch_vals, pitch_conf = es.PredominantPitchMelodia(sampleRate=sample_rate)(audio)
+        valid = pitch_vals[pitch_conf > 0.3]
+        pitch_mean = float(np.mean(valid)) if len(valid) > 0 else 0.0
+        pitch_std = float(np.std(valid)) if len(valid) > 0 else 0.0
+
+        # 5. Parallel ML Preprocessing
         ml_patches = None
         if not skip_models:
             ml_patches = model_inference.preprocess_audio(audio)
-
-        # 5. Pitch (Optional)
-        res_pitch = {"PitchMeanHz": 0.0, "PitchStdHz": 0.0}
-        if not skip_pitch:
-            try:
-                pitch_vals, pitch_conf = es.PredominantPitchMelodia(sampleRate=sample_rate)(audio)
-                valid = pitch_vals[pitch_conf > 0.3]
-                res_pitch["PitchMeanHz"] = float(np.mean(valid)) if len(valid) > 0 else 0.0
-                res_pitch["PitchStdHz"] = float(np.std(valid)) if len(valid) > 0 else 0.0
-            except: pass
 
         res = {
             "YouTubeID": metadata.get("id", "Unknown"),
@@ -137,15 +135,16 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
             "SpectralCentroidHz": float(np.mean(centroids)) if centroids else 0.0,
             "SpectralRolloffHz": float(np.mean(rolloffs)) if rolloffs else 0.0,
             "SpectralFlatness": float(np.mean(flatness)) if flatness else 0.0,
+            "PitchMeanHz": pitch_mean,
+            "PitchStdHz": pitch_std,
             "ZeroCrossingRate": float(es.ZeroCrossingRate()(audio)),
             "AvgMFCC": np.mean(mfccs, axis=0) if mfccs else np.zeros(13),
             "AvgHPCP": np.mean(hpcps, axis=0) if hpcps else np.zeros(12),
         }
-        res.update(res_pitch)
         return res, ml_patches
 
     except Exception as e:
-        logger.error(f"Base extraction failed: {e}")
+        logger.error(f"High-Fidelity extraction failed: {e}")
         return None
 
 def finalize_song_data(base_data: dict, ml_res: dict) -> dict:
@@ -222,10 +221,3 @@ def finalize_song_data(base_data: dict, ml_res: dict) -> dict:
     result["DiscogsEmbeddingJson"] = json.dumps(ml_res["embedding"].tolist()) if ml_res.get("embedding") is not None else "[]"
 
     return result
-
-def save_to_dataframe(results_list: list[dict], output_csv: str) -> None:
-    if not results_list: return
-    output_path = Path(output_csv)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    df = pd.DataFrame(results_list)
-    df.to_csv(output_path, mode="a", header=not output_path.exists(), index=False)

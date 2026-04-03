@@ -19,6 +19,16 @@ import essentia.standard as es
 
 logger = logging.getLogger(__name__)
 
+# --- FIX: Enable Dynamic GPU Memory Growth at Import Time ---
+try:
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+except Exception as e:
+    pass # Already set or not available
+# ------------------------------------------------------------
+
 # Global model instances
 _models_lock = threading.Lock()
 _PREPROCESSOR: Any = None
@@ -76,6 +86,17 @@ def _ensure_models_loaded() -> None:
 
     with _models_lock:
         if _models_initialized: return
+
+        # --- FIX: Enable Dynamic GPU Memory Growth ---
+        # This prevents cuDNN initialization errors on virtualized GPUs (L4)
+        gpus = tf.config.experimental.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+            except RuntimeError as e:
+                logger.warning(f"GPU Memory Growth config failed: {e}")
+        # ----------------------------------------------
 
         logger.info(f"Initializing High-Performance Inference Engine from {MODELS_DIR}")
         _PREPROCESSOR = es.TensorflowInputMusiCNN()
