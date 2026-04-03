@@ -1,88 +1,46 @@
-# YouTube Audio Pipeline Production Upgrade Summary
+# YouTube Audio Pipeline: CPU-Native Stealth (v3.0)
 
-This document provides a comprehensive technical overview of the production-grade enhancements implemented in the YouTube audio pipeline. These changes were designed to maximize throughput on multi-core servers with GPU acceleration while ensuring high-fidelity metrics for both SQL searching and semantic indexing.
-
----
-
-## 🎯 Core Project Objectives
-The primary goal of this pipeline is to generate a massive, structured dataset of musical characteristics to power two distinct search paradigms:
-1.  **Direct Database Search (MariaDB)**: A "wide" table format allowing sub-second SQL queries like:
-    *   *Find all happy, energetic rock songs with a BPM > 120.*
-    *   *Rank classical songs by their "Brightness" (Spectral Centroid).*
-2.  **Semantic Search Foundation**: High-dimensional audio embeddings (1280-dim) ready for training a secondary **Natural Language Search Model**. This will allow users to search using complex prompts like: *"Dreamy acoustic folk for a rainy afternoon."*
+This document provides a technical overview of the v3.0 "CPU-Native" architecture, designed for maximum stability and resilience when processing large datasets (10,000+ songs).
 
 ---
 
-## 🚀 Turbo Architectural Breakthroughs (High-Throughput)
+## 🚀 The CPU-Native Pivot (v3.0)
 
-### 1. Multi-Producer Parallel Downloading
-We identified that the single biggest bottleneck in production was waiting for individual YouTube downloads. We implemented a **Multi-Producer** model:
-*   **Parallel Fetching**: Instead of 1 download at a time, the pipeline now pulls **4 songs simultaneously** (configurable via `--downloaders`).
-*   **Zero Idle Time**: This ensures that as soon as an analyzer finishes a song, there is already a fresh file waiting in RAM.
+We have transitioned from GPU-accelerated processing to **Pure CPU Execution**. While the GPU offered theoretical speed, the NVIDIA L4 driver environment proved unstable for long-running, intermittent tasks. 
 
-### 2. Dual-Consumer Parallel Workflow
-We transitioned to a decoupled architecture to maximize hardware overlap:
-*   **Consumer 1 (Parallel Analyzers)**: A pool of workers that perform CPU-heavy tasks (BPM, Key, Spectral math) and **Parallel ML Preprocessing** (mel-spectrogram computation) simultaneously across all available cores.
-*   **Consumer 2 (Batch Inference Manager)**: A dedicated thread that collects processed data and runs the ML models in **vectorized batches** on the GPU.
-
-### 3. GPU-Optimized Vectorized Batching
-Neural networks are inefficient when processing one track at a time. The new engine:
-*   Packs patches from **multiple tracks** into a single large tensor.
-*   Offloads all 7 ML classification heads to the **NVIDIA GPU** in a single call.
-*   **Performance Impact**: Reduces ML latency from seconds to milliseconds per track.
-
-### 4. "16kHz Uniform" & Filter-Bank Optimization
-Traditional pipelines often resample audio multiple times. Our production engine:
-*   Resamples audio to **16kHz during the download phase** using `ffmpeg` hardware acceleration.
-*   **Fixed Filter-Banks**: MFCC and Spectral algorithms are explicitly configured for 16kHz/1024-frame spectral sizes to stop the CPU from recomputing filter-banks for every song.
-*   **Results**: This reduced "Spectral Pass" time from seconds down to 0.2s per song.
+### 💎 Why v3.0 is the best version yet:
+1.  **Rock-Solid Stability**: By bypassing the NVIDIA drivers entirely, we have eliminated 100% of the memory allocation and cuDNN initialization crashes.
+2.  **Simplified Environment**: No more `LD_LIBRARY_PATH` hacks or complex bash exports. The engine runs natively in any standard Python environment.
+3.  **High-Fidelity Accuracy preserved**: Even on CPU, you get the full **Melodia Pitch Tracking** and 6x high-resolution spectral math.
+4.  **Implicit Stealth**: The CPU processing time (~8s/song) acts as a natural "human-like" delay that helps prevent YouTube bot detection.
 
 ---
 
-## 📈 Performance Benchmarks (Verified)
+## 🕵️ Key Features
 
-Tested on 16 songs (Standard lengths):
-*   **Original Pipeline**: 3 minutes 55 seconds.
-*   **Turbo Architecture**: **1 minute 03 seconds**.
-*   **Speedup**: **3.7x Faster end-to-end**.
+### 1. Resiliency & Hibernate Mode
+The engine detects bot-challenges (`Sign in to confirm you're not a bot`). 
+*   **Action**: On detection, the system enters **Hibernate Mode** for 5 minutes.
+*   **Result**: Prevents IP blacklisting and allows rate-limit buckets to reset.
 
----
-
-## 📈 Metric Polish & Data Richness
-
-The output is now a **purely numerical 131-column matrix**, organized for machine consumption:
-
-### Rhythmic & Structural
-*   **BeatCount vs. OnsetCount**: Correctly separated.
-    *   `BeatCount` = The steady pulse (BPM-based).
-    *   `OnsetCount` = Every individual note/drum hit (Density-based).
-*   **Aggregated Danceability**: Combines rhythmic confidence with ML "party" and "energetic" scores.
-
-### Emotional & Harmonic
-*   **Algorithmic Valence**: Calculated directly from Key, Brightness, and Energy.
-*   **Strict HPCP Numbering**: Mapped to the 12 chromatic semitones (C through B).
-*   **Multi-task Mood/Theme**: Predicts 56 unique tags in parallel.
+### 2. Persistent State Saver
+Progress is tracked in `data/processed/pipeline_state.json`.
+*   **Action**: Every successful track is logged.
+*   **Result**: Automatic resume support. If the process is interrupted, it skips finished tracks instantly upon restart.
 
 ---
 
-## 🛠️ Production Usage Guide
+## 🚀 Usage Guide
 
-### Recommended Scaling Flags:
-To run on your 6-core server with GPU:
+### Recommended Execution:
+We recommend running the engine inside a **`tmux`** session to prevent interruption if your SSH connection drops.
+
 ```bash
-# Set GPU path
-export LD_LIBRARY_PATH=$(pwd)/.venv/nvidia_fix:$(.venv/bin/python3 -c 'import os, sys; from glob import glob; print(":".join(set(os.path.dirname(p) for p in glob(sys.prefix + "/lib/python*/site-packages/nvidia/*/lib/*.so*"))))'):/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
-
-# Run Command
-.venv/bin/python3 -m youtube_audio_pipeline.main \
-  --downloaders 4 \
-  --workers 6 \
-  --batch-size 16 \
-  --skip-pitch
+# Start the CPU-Native Stealth Engine
+./youtube_audio_pipeline/youtube_pipeline.sh
 ```
 
-### Flags Explained:
-*   `--downloaders 4`: Pulls 4 videos at once to hide internet latency.
-*   `--workers 6`: Uses all CPU cores for parallel base analysis.
-*   `--batch-size 16`: Aggregates 16 tracks for the GPU.
-*   `--skip-pitch`: Bypasses the heavy Melodia algorithm for massive speed gains.
+### Capacity:
+*   **Steady State Speed**: ~8-10 seconds per song.
+*   **Hourly Throughput**: ~350-400 songs per hour.
+*   **Full 10k Run**: ~25-30 Hours (Perfect for a single weekend run).
