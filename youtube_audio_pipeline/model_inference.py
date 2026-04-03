@@ -145,7 +145,7 @@ def preprocess_audio(audio_16k: np.ndarray) -> np.ndarray:
 
 def run_batch_inference(list_of_patches: list[np.ndarray]) -> list[dict[str, Any]]:
     """
-    Vectorized batch inference (CPU Optimized).
+    Vectorized batch inference with 64-patch chunking for fixed-size models.
     """
     _ensure_models_loaded()
     if not list_of_patches: return []
@@ -161,18 +161,37 @@ def run_batch_inference(list_of_patches: list[np.ndarray]) -> list[dict[str, Any
         track_patch_ranges.append((current_idx, current_idx + count))
         current_idx += count
 
-    # 2. Backbone Inference (CPU can handle any size, no 64-chunk limit)
-    embs = _run_sess(_BACKBONE_SESS, _INP_B, _OUT_B, _PHELDS_B, np.array(all_patches))
+    # 2. Backbone Inference (CHUNKED into 64 for fixed-model compatibility)
+    CHUNK_SIZE = 64
+    all_patches_np = np.array(all_patches)
+    total_to_process = len(all_patches_np)
+    all_embs = []
     
+    for i in range(0, total_to_process, CHUNK_SIZE):
+        chunk = all_patches_np[i : i + CHUNK_SIZE]
+        actual_len = len(chunk)
+        
+        # PADDING: If chunk < 64, pad with zeros to satisfy the model
+        if actual_len < CHUNK_SIZE:
+            padding = np.zeros((CHUNK_SIZE - actual_len, 128, 96), dtype=np.float32)
+            chunk = np.vstack([chunk, padding])
+        
+        chunk_embs = _run_sess(_BACKBONE_SESS, _INP_B, _OUT_B, _PHELDS_B, chunk)
+        # Store only the real results (discard padding)
+        all_embs.append(chunk_embs[:actual_len])
+    
+    combined_embs = np.concatenate(all_embs, axis=0)
+
     # 3. Aggregate Embeddings per Track and Run Heads
     final_results = []
     for start, end in track_patch_ranges:
-        track_patches_embs = embs[start:end]
+        track_patches_embs = combined_embs[start:end]
         track_embedding = np.mean(track_patches_embs, axis=0, keepdims=True)
         
         res: dict[str, Any] = {"embedding": track_embedding.flatten()}
         
         for key, (sess, inp, out, phelds) in _HEAD_SESSIONS.items():
+            # Heads are flexible, we can run them on the single track embedding
             logits = _run_sess(sess, inp, out, phelds, track_embedding)
             probs = logits.flatten()
             labels = _METADATA.get(key, {}).get("classes", [])
