@@ -7,6 +7,7 @@ import time
 import queue
 import threading
 import json
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 STATE_FILE = "data/processed/pipeline_state.json"
 
 def load_processed_ids() -> set[str]:
+    """Loads the set of YouTube IDs that have already been fully processed."""
     if not os.path.exists(STATE_FILE): return set()
     try:
         with open(STATE_FILE, "r") as f:
@@ -32,6 +34,7 @@ def load_processed_ids() -> set[str]:
     except: return set()
 
 def save_processed_id(video_id: str):
+    """Appends a single YouTube ID to the state file to mark it as complete."""
     processed = list(load_processed_ids())
     if video_id not in processed:
         processed.append(video_id)
@@ -59,6 +62,16 @@ def format_duration(seconds: float) -> str:
     elif minutes > 0: return f"{minutes}m {secs}s"
     else: return f"{secs}s"
 
+def save_row_to_csv(row: dict, output_csv: str):
+    """Saves a single processed row to the CSV using native writer."""
+    output_path = Path(output_csv)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = output_path.exists()
+    with open(output_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=row.keys())
+        if not file_exists: writer.writeheader()
+        writer.writerow(row)
+
 def run_turbo_pipeline(
     urls: list[dict[str, str | None]],
     output_csv: str,
@@ -66,6 +79,8 @@ def run_turbo_pipeline(
     num_downloaders: int = 1,
     num_analyzers: int = 1,
     ml_batch_size: int = 16,
+    skip_models: bool = False,
+    skip_pitch: bool = False
 ) -> tuple[int, int]:
     if not urls: return 0, 0
     
@@ -77,8 +92,8 @@ def run_turbo_pipeline(
     already_done = total_count - len(to_process_urls)
     start_time = time.time()
     
-    print(f"🕵️ Stealth Baseline Active (v2.3)")
-    print(f"📊 Progress: {already_done}/{total_count} already processed.")
+    print(f"🕵️ Stealth Baseline Active (v3.0 CPU-Native)")
+    print(f"📊 Progress: {already_done}/{total_count} already finished.")
     
     if not to_process_urls:
         print("✅ All songs are already processed!")
@@ -111,7 +126,11 @@ def run_turbo_pipeline(
 
     def _run_batch(batch):
         list_of_patches = [item[1] for item in batch]
-        ml_batch_results = model_inference.run_batch_inference(list_of_patches)
+        
+        if not skip_models:
+            ml_batch_results = model_inference.run_batch_inference(list_of_patches)
+        else:
+            ml_batch_results = [{"embedding": None} for _ in batch]
         
         completed_rows = []
         for i, (base_data, _) in enumerate(batch):
@@ -137,7 +156,7 @@ def run_turbo_pipeline(
                 inference_queue.put(None)
                 return
             
-            res = extract_base_features(Path(filepath), metadata)
+            res = extract_base_features(Path(filepath), metadata, skip_models=skip_models, skip_pitch=skip_pitch)
             if Path(filepath).exists(): Path(filepath).unlink()
             
             if res:
@@ -163,13 +182,15 @@ def run_turbo_pipeline(
     return processed_count, processed_count
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="YouTube Audio Pipeline Stealth Baseline")
+    parser = argparse.ArgumentParser(description="YouTube Audio Pipeline Stealth Baseline v3.0")
     parser.add_argument("--urls-file", type=str, default="youtube_audio_pipeline/urls.example.txt")
     parser.add_argument("--url", action="append")
     parser.add_argument("--output-csv", type=str, default="data/processed/youtube_song_characteristics.csv")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--downloaders", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--skip-models", action="store_true")
+    parser.add_argument("--skip-pitch", action="store_true")
     args = parser.parse_args()
 
     urls = []
@@ -181,14 +202,17 @@ def main() -> None:
         urls.extend(load_urls(args.urls_file))
 
     if not urls: return
-    model_inference.initialize_models_globally()
+    if not args.skip_models:
+        model_inference.initialize_models_globally()
 
     run_turbo_pipeline(
         urls, 
         args.output_csv, 
         num_downloaders=args.downloaders,
         num_analyzers=args.workers, 
-        ml_batch_size=args.batch_size, 
+        ml_batch_size=args.batch_size,
+        skip_models=args.skip_models,
+        skip_pitch=args.skip_pitch
     )
 
 if __name__ == "__main__":
