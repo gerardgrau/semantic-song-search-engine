@@ -40,23 +40,19 @@ ALL_MOODS = [
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return max(low, min(high, value))
 
-def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_models: bool = False) -> tuple[dict, np.ndarray | None] | None:
+def extract_base_features(filepath: Path, metadata: dict, skip_models: bool = False, skip_pitch: bool = True) -> tuple[dict, np.ndarray | None] | None:
     """
-    Stage 1: High-Fidelity feature extraction.
-    Prioritizes accuracy over speed by utilizing heavy-duty algorithms (Melodia)
-    and high-resolution spectral mapping.
+    Stage 1: Stable feature extraction.
+    Reverted to standard resolution to prevent GPU memory pressure.
     """
     try:
         sample_rate = 16000
         
-        if isinstance(input_data, np.ndarray):
-            audio = input_data
-        else:
-            # High-Fidelity loading: Essentia handles resampling internally
-            loader = es.MonoLoader(filename=str(input_data), sampleRate=sample_rate)
-            audio = loader()
+        # Load audio at 16kHz
+        loader = es.MonoLoader(filename=str(filepath), sampleRate=sample_rate)
+        audio = loader()
 
-        # 1. Rhythm & Beats (Advanced Multi-feature)
+        # 1. Rhythm & Beats
         rhythm_extractor = es.RhythmExtractor2013(method="multifeature")
         bpm, beats, beats_confidence, _, _ = rhythm_extractor(audio)
         beat_count = len(beats)
@@ -67,7 +63,7 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         rms_energy = np.sqrt(np.mean(audio**2))
         dance_alg_val, _ = es.Danceability()(audio)
 
-        # 3. High-Resolution Spectral Mapping
+        # 3. Spectral features (Standard Resolution)
         od_hfc = es.OnsetDetection(method="hfc")
         w = es.Windowing(type="hann")
         fft = es.FFT()
@@ -79,13 +75,13 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         hpcp_alg = es.HPCP(sampleRate=sample_rate)
         peaks_alg = es.SpectralPeaks(sampleRate=sample_rate)
 
-        # We average every 5 frames (~0.15s) for 6x more detail than before
+        # Process frames (Averaging every 31 frames ~1s for stability)
         frame_idx = 0
         for frame in es.FrameGenerator(audio, frameSize=1024, hopSize=512):
             mag, phs = c2p(fft(w(frame)))
             det_func.append(od_hfc(mag, phs))
             
-            if frame_idx % 5 == 0:
+            if frame_idx % 31 == 0:
                 m_f = mag.astype(np.float32)
                 centroids.append(es.Centroid()(m_f))
                 rolloffs.append(es.RollOff()(m_f))
@@ -99,10 +95,9 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         onset_times = es.Onsets()(essentia.array([det_func]), [1])
         duration = len(audio) / sample_rate
 
-        # 4. Melodia Pitch Extraction (The Heavy-Duty Part)
-        # Slower but essential for high-fidelity harmonic data
-        pitch_vals, pitch_conf = es.PredominantPitchMelodia(sampleRate=sample_rate)(audio)
-        valid = pitch_vals[pitch_conf > 0.3]
+        # 4. Pitch (Reverted to simple mean/std)
+        pitch_vals, pitch_conf = es.PitchMelodia(sampleRate=sample_rate)(audio) if not skip_pitch else (np.zeros(1), np.zeros(1))
+        valid = pitch_vals[pitch_conf > 0.5]
         pitch_mean = float(np.mean(valid)) if len(valid) > 0 else 0.0
         pitch_std = float(np.std(valid)) if len(valid) > 0 else 0.0
 
@@ -144,7 +139,7 @@ def extract_base_features(input_data: Path | np.ndarray, metadata: dict, skip_mo
         return res, ml_patches
 
     except Exception as e:
-        logger.error(f"High-Fidelity extraction failed: {e}")
+        logger.error(f"Base extraction failed: {e}")
         return None
 
 def finalize_song_data(base_data: dict, ml_res: dict) -> dict:
