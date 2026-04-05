@@ -1,53 +1,13 @@
 <!doctype html>
-<html lang="ca">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Descobreix Viasona - Prototype</title>
-    <link rel="stylesheet" href="./styles.css?v=2" />
+    <title>frontend</title>
   </head>
   <body>
-    <main class="app-shell">
-      <header class="top-search">
-        <form id="search-form" class="search-form">
-          <label for="search-input" class="sr-only">Cerca</label>
-          <input
-            id="search-input"
-            name="q"
-            type="text"
-            placeholder="Escriu una cerca (ex: cançons tristes en català)"
-            autocomplete="off"
-          />
-          <button type="submit">Cercar</button>
-        </form>
-      </header>
-
-      <section class="content-grid">
-        <aside class="results-column">
-          <article class="results-card">
-            <h2>Resultats tradicionals</h2>
-            <ul id="traditional-list" class="result-list"></ul>
-          </article>
-
-          <article class="results-card">
-            <h2>Resultats intel·ligents</h2>
-            <ul id="intelligent-list" class="result-list"></ul>
-          </article>
-        </aside>
-
-        <section class="map-column">
-          <div class="map-card">
-            <div class="map-header">
-              <h2>Mapa de cançons (demo)</h2>
-              <p id="map-caption">Visualització de prova</p>
-            </div>
-            <div id="map-canvas" class="map-canvas" aria-label="Mapa de cançons"></div>
-          </div>
-        </section>
-      </section>
-    </main>
-
-    <script src="./config.js?v=2"></script>
-    <script src="./app.js?v=2"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

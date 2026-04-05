@@ -50,6 +50,11 @@ site/
 
 # Local Jupyter/runtime files
 .jupyter/
+# Node / React
+node_modules/
+app/frontend/dist/
+app/frontend/.vite/
+
 # AI Code Editors
 .omg*
 

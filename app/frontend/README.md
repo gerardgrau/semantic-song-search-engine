@@ -1,56 +1,16 @@
-# Frontend (prototype scaffold)
+# React + Vite
 
-This frontend is a lightweight demo focused on **layout and interaction flow**.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-It intentionally uses mock/test content so the team can validate UX before implementing real classic search, intelligent search, and map logic.
+Currently, two official plugins are available:
 
-## What is implemented
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
 
-- wide search bar at the top
-- left column with two lists:
-  - traditional results
-  - intelligent results
-- right column with a map panel (prototype scatter visualization)
-- loading/error states
-- backend integration with local fallback mock data
+## React Compiler
 
-## Structure
+The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
 
-```text
-app/frontend/
-  index.html
-  styles.css
-  app.js
-  config.js
-  config.example.js
-```
+## Expanding the ESLint configuration
 
-## Configure API URL
-
-`config.js` contains:
-
-```js
-window.APP_CONFIG = {
-  API_BASE_URL: "http://127.0.0.1:8000"
-}
-```
-
-If backend URL changes, edit `app/frontend/config.js`.
-
-## Run frontend locally
-
-From repository root:
-
-```bash
-python -m http.server 3000 -d app/frontend
-```
-
-Open:
-
-- `http://127.0.0.1:3000`
-
-## Notes
-
-- This is a prototype UI scaffold.
-- Map points are placeholders for future clustering/embedding visualization.
-- Song and score content is test-only.
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
