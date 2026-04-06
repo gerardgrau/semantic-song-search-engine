@@ -1,23 +1,31 @@
-"""API routes for song search and retrieval."""
+"""API routes for song search, filtering, and detail retrieval."""
 
-from fastapi import APIRouter, HTTPException, Query
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException
 
 from app.backend.api.schemas import (
     AllSongsResponse,
+    FilterRequest,
+    FilterResponse,
     Point2D,
     Point3D,
-    SearchResponse,
+    SongDetail,
     SongResult,
 )
-from app.backend.core.data_loader import get_song_by_id, load_all_songs
+from app.backend.core.data_loader import get_song_by_id, get_songs_by_ids, load_all_songs
 from app.backend.core.embeddings import filter_embeddings
-from app.backend.core.projections import get_projections_2d, get_projections_3d
+from app.backend.core.projections import (
+    compute_tsne_2d,
+    compute_tsne_3d,
+    get_all_projections_2d,
+    get_all_projections_3d,
+)
 
 router = APIRouter(prefix="/api")
 
 
-def _song_to_result(song: dict, default_score: float = 0.0) -> SongResult:
-    """Convert a raw song dict to a SongResult schema."""
+def _to_result(song: dict) -> SongResult:
     return SongResult(
         id=song["id"],
         title=song["title"],
@@ -26,71 +34,85 @@ def _song_to_result(song: dict, default_score: float = 0.0) -> SongResult:
         genre=song["genre"],
         year=song["year"],
         lyrics_snippet=song["lyrics_snippet"],
-        score=song.get("score", default_score),
+        score=song.get("score", 0.0),
     )
 
 
+# ------------------------------------------------------------------
+# GET /api/songs  –  initial load / reset
+# ------------------------------------------------------------------
 @router.get("/songs", response_model=AllSongsResponse)
 def get_all_songs():
     """
-    Returns all songs with their 2D and 3D projections.
-
-    Used for the initial page load and when the user resets the search.
+    Return all songs with cached full-dataset t-SNE projections.
+    Used on initial page load and when the user presses "Reset".
     """
     songs = load_all_songs()
-    song_results = [_song_to_result(s) for s in songs]
-    points_2d = [Point2D(**p) for p in get_projections_2d()]
-    points_3d = [Point3D(**p) for p in get_projections_3d()]
-
     return AllSongsResponse(
-        songs=song_results,
-        points_2d=points_2d,
-        points_3d=points_3d,
+        songs=[_to_result(s) for s in songs],
+        projections_2d=[Point2D(**p) for p in get_all_projections_2d()],
+        projections_3d=[Point3D(**p) for p in get_all_projections_3d()],
         total=len(songs),
     )
 
 
-@router.get("/search", response_model=SearchResponse)
-def search_songs(q: str = Query(..., min_length=1, description="Search query text")):
+# ------------------------------------------------------------------
+# POST /api/filter  –  progressive filtering
+# ------------------------------------------------------------------
+@router.post("/filter", response_model=FilterResponse)
+def filter_songs(body: FilterRequest):
     """
-    Filter songs by semantic similarity to the query text.
+    Progressive filter.
 
-    Returns all songs scored by relevance, along with 2D/3D projections
-    for the map visualization.
+    1. If song_ids is provided, restrict to those songs; otherwise use all.
+    2. Apply filter_embeddings(query, songs) → survivors with scores.
+    3. Re-compute t-SNE 2D & 3D on the survivors.
+    4. If ≤ 5 survivors → include a special message.
     """
-    all_songs = load_all_songs()
-    scored_songs = filter_embeddings(query_text=q, songs=all_songs)
+    if body.song_ids is not None:
+        songs = get_songs_by_ids(body.song_ids)
+    else:
+        songs = load_all_songs()
 
-    song_results = [_song_to_result(s) for s in scored_songs]
+    survivors = filter_embeddings(query_text=body.query, songs=songs)
+    n = len(survivors)
 
-    # Count how many songs have a "high" relevance score (mock threshold)
-    high_score_threshold = 0.7
-    total_filtered = sum(1 for s in scored_songs if s["score"] >= high_score_threshold)
-
-    # Get projections for all songs (frontend decides which to highlight)
-    points_2d = [Point2D(**p) for p in get_projections_2d()]
-    points_3d = [Point3D(**p) for p in get_projections_3d()]
+    # Compute fresh t-SNE on the surviving subset
+    proj_2d = compute_tsne_2d(survivors)
+    proj_3d = compute_tsne_3d(survivors)
 
     message = None
-    if total_filtered == 0:
-        message = f"No s'han trobat resultats rellevants per a '{q}'. Mostrant totes les cançons ordenades per rellevància."
-    elif total_filtered < 10:
-        message = f"S'han trobat {total_filtered} cançons rellevants per a '{q}'."
+    if n <= 5:
+        message = f"Explora les {n} cançons per tu"
 
-    return SearchResponse(
-        query=q,
-        songs=song_results,
-        points_2d=points_2d,
-        points_3d=points_3d,
-        total_filtered=total_filtered,
+    return FilterResponse(
+        songs=[_to_result(s) for s in survivors],
+        projections_2d=[Point2D(**p) for p in proj_2d],
+        projections_3d=[Point3D(**p) for p in proj_3d],
+        total_remaining=n,
         message=message,
     )
 
 
-@router.get("/songs/{song_id}", response_model=SongResult)
+# ------------------------------------------------------------------
+# GET /api/songs/{song_id}  –  song detail
+# ------------------------------------------------------------------
+@router.get("/songs/{song_id}", response_model=SongDetail)
 def get_song(song_id: int):
-    """Get a single song by its ID."""
+    """Return full detail for a single song (used by the popup)."""
     song = get_song_by_id(song_id)
     if song is None:
-        raise HTTPException(status_code=404, detail=f"Song with id {song_id} not found")
-    return _song_to_result(song)
+        raise HTTPException(status_code=404, detail=f"Song {song_id} not found")
+    return SongDetail(
+        id=song["id"],
+        title=song["title"],
+        artist=song["artist"],
+        album=song["album"],
+        genre=song["genre"],
+        year=song["year"],
+        lyrics_snippet=song["lyrics_snippet"],
+        full_lyrics=song.get("full_lyrics", ""),
+        url=song.get("url"),
+        duration=song.get("duration"),
+        language=song.get("language"),
+    )

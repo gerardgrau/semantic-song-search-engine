@@ -1,81 +1,137 @@
 """
-Projection module for 2D and 3D song map coordinates.
+Projection module — computes t-SNE 2D and 3D from k-dimensional embeddings.
 
-MOCK: Returns pre-computed embedding_2d / embedding_3d values from mock data.
-REAL: Would compute or retrieve UMAP/t-SNE projections from the full
-      high-dimensional embedding space. Projections would typically be
-      pre-computed in batch and stored alongside the song data, then
-      re-computed when the embedding model or song corpus changes.
+The full-dataset projections are cached so that a "reset" is instant.
+Any filtered subset triggers a fresh t-SNE computation.
 """
+
+from __future__ import annotations
+
+import numpy as np
+from sklearn.manifold import TSNE
 
 from app.backend.core.data_loader import load_all_songs
 
+# ---------------------------------------------------------------------------
+# Cache for full-dataset projections (computed once, reused on reset)
+# ---------------------------------------------------------------------------
+_cached_all_2d: list[dict] | None = None
+_cached_all_3d: list[dict] | None = None
 
-def get_projections_2d(song_ids: list[int] | None = None) -> list[dict]:
+
+def _songs_to_matrix(songs: list[dict]) -> np.ndarray:
+    """Extract the k-dim embedding from each song into an (n, k) numpy array."""
+    return np.array([s["embedding"] for s in songs], dtype=np.float64)
+
+
+def _run_tsne(matrix: np.ndarray, n_components: int) -> np.ndarray:
     """
-    Get 2D projections for songs.
+    Run t-SNE on an (n, k) matrix and return (n, n_components) coordinates.
 
-    MOCK: Returns the pre-computed embedding_2d from mock data.
-    REAL: Would return UMAP/t-SNE 2D projections from the full embedding space.
-          These projections reduce high-dimensional embeddings (e.g., 768-dim)
-          to 2D coordinates for visualization. Typically pre-computed with:
-            - UMAP(n_components=2, metric='cosine', n_neighbors=15)
-            - or t-SNE(n_components=2, perplexity=30)
-
-    Args:
-        song_ids: Optional list of song IDs to filter. If None, returns all.
-
-    Returns:
-        List of dicts with {id, x, y, title, artist, genre}.
+    Handles edge cases:
+      - n == 1  → return origin
+      - n < 4   → use PCA init and perplexity = max(1, n-1)
+      - n >= 4  → standard t-SNE with perplexity = min(30, n-1)
     """
-    songs = load_all_songs()
+    n = matrix.shape[0]
+    if n <= 1:
+        return np.zeros((n, n_components))
 
-    if song_ids is not None:
-        id_set = set(song_ids)
-        songs = [s for s in songs if s["id"] in id_set]
+    perplexity = min(30, n - 1)
+    perplexity = max(1, perplexity)
 
-    return [
-        {
+    init = "pca" if n >= n_components else "random"
+
+    tsne = TSNE(
+        n_components=n_components,
+        perplexity=perplexity,
+        random_state=42,
+        init=init,
+        max_iter=500,
+    )
+    return tsne.fit_transform(matrix)
+
+
+def _build_points(songs: list[dict], coords: np.ndarray, dims: int) -> list[dict]:
+    """Combine song metadata with projected coordinates."""
+    points = []
+    for i, song in enumerate(songs):
+        p = {
             "id": song["id"],
-            "x": song["embedding_2d"][0],
-            "y": song["embedding_2d"][1],
+            "x": round(float(coords[i, 0]), 4),
+            "y": round(float(coords[i, 1]), 4),
             "title": song["title"],
             "artist": song["artist"],
             "genre": song["genre"],
         }
-        for song in songs
-    ]
+        if dims == 3:
+            p["z"] = round(float(coords[i, 2]), 4)
+        points.append(p)
+    return points
 
 
-def get_projections_3d(song_ids: list[int] | None = None) -> list[dict]:
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def compute_tsne_2d(songs: list[dict]) -> list[dict]:
     """
-    Get 3D projections for songs.
-
-    MOCK: Returns the pre-computed embedding_3d from mock data.
-    REAL: Would return UMAP/t-SNE 3D projections from the full embedding space.
-          Same as 2D but with n_components=3 for 3D visualization.
+    Compute t-SNE 2D projections from the k-dimensional 'embedding' field.
 
     Args:
-        song_ids: Optional list of song IDs to filter. If None, returns all.
+        songs: list of song dicts, each must contain 'embedding' (list[float]).
 
     Returns:
-        List of dicts with {id, x, y, z, title, artist, genre}.
+        List of {id, x, y, title, artist, genre}.
     """
-    songs = load_all_songs()
+    if not songs:
+        return []
+    matrix = _songs_to_matrix(songs)
+    coords = _run_tsne(matrix, n_components=2)
+    return _build_points(songs, coords, dims=2)
 
-    if song_ids is not None:
-        id_set = set(song_ids)
-        songs = [s for s in songs if s["id"] in id_set]
 
-    return [
-        {
-            "id": song["id"],
-            "x": song["embedding_3d"][0],
-            "y": song["embedding_3d"][1],
-            "z": song["embedding_3d"][2],
-            "title": song["title"],
-            "artist": song["artist"],
-            "genre": song["genre"],
-        }
-        for song in songs
-    ]
+def compute_tsne_3d(songs: list[dict]) -> list[dict]:
+    """
+    Compute t-SNE 3D projections from the k-dimensional 'embedding' field.
+
+    Args:
+        songs: list of song dicts, each must contain 'embedding' (list[float]).
+
+    Returns:
+        List of {id, x, y, z, title, artist, genre}.
+    """
+    if not songs:
+        return []
+    matrix = _songs_to_matrix(songs)
+    coords = _run_tsne(matrix, n_components=3)
+    return _build_points(songs, coords, dims=3)
+
+
+def get_all_projections_2d() -> list[dict]:
+    """
+    Get cached 2D projections for ALL songs.
+    Computes t-SNE on first call, then returns the cache.
+    """
+    global _cached_all_2d
+    if _cached_all_2d is None:
+        _cached_all_2d = compute_tsne_2d(load_all_songs())
+    return _cached_all_2d
+
+
+def get_all_projections_3d() -> list[dict]:
+    """
+    Get cached 3D projections for ALL songs.
+    Computes t-SNE on first call, then returns the cache.
+    """
+    global _cached_all_3d
+    if _cached_all_3d is None:
+        _cached_all_3d = compute_tsne_3d(load_all_songs())
+    return _cached_all_3d
+
+
+def invalidate_cache() -> None:
+    """Clear projection caches (e.g. if the song corpus changes)."""
+    global _cached_all_2d, _cached_all_3d
+    _cached_all_2d = None
+    _cached_all_3d = None

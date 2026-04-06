@@ -2,8 +2,7 @@
 FastAPI application entry point.
 
 Run with:
-    uvicorn app.backend.api.main:app --reload
-    (from the project root: /mnt/c/Users/eloip/Documents/UPC/PE/semantic-song-search-engine)
+    uvicorn app.backend.api.main:app --reload --host 127.0.0.1 --port 8000
 """
 
 from fastapi import FastAPI
@@ -13,12 +12,10 @@ from app.backend.api.routes.search import router as search_router
 
 app = FastAPI(
     title="Semantic Song Search Engine",
-    description="API for searching Catalan songs using semantic embeddings and visualizing them on a 2D/3D map.",
-    version="0.1.0",
+    description="API for searching Catalan songs using semantic embeddings.",
+    version="0.2.0",
 )
 
-# CORS: allow all origins for local development.
-# REAL: Restrict origins to the frontend domain in production.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,5 +29,4 @@ app.include_router(search_router)
 
 @app.get("/")
 def root():
-    """Health check / landing endpoint."""
-    return {"status": "ok", "message": "Semantic Song Search Engine API"}
+    return {"status": "ok", "message": "Semantic Song Search Engine API v0.2"}

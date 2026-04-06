@@ -1,11 +1,11 @@
-"""Pydantic models for API request/response validation."""
+"""Pydantic models for API request / response validation."""
+
+from __future__ import annotations
 
 from pydantic import BaseModel
 
 
 class SongResult(BaseModel):
-    """A song with its search relevance score."""
-
     id: int
     title: str
     artist: str
@@ -16,9 +16,21 @@ class SongResult(BaseModel):
     score: float = 0.0
 
 
-class Point2D(BaseModel):
-    """A 2D projection point for the song map."""
+class SongDetail(BaseModel):
+    id: int
+    title: str
+    artist: str
+    album: str
+    genre: str
+    year: int
+    lyrics_snippet: str
+    full_lyrics: str
+    url: str | None = None
+    duration: str | None = None
+    language: str | None = None
 
+
+class Point2D(BaseModel):
     id: int
     x: float
     y: float
@@ -28,8 +40,6 @@ class Point2D(BaseModel):
 
 
 class Point3D(BaseModel):
-    """A 3D projection point for the song map."""
-
     id: int
     x: float
     y: float
@@ -39,21 +49,21 @@ class Point3D(BaseModel):
     genre: str
 
 
-class SearchResponse(BaseModel):
-    """Response for a search query."""
-
-    query: str
-    songs: list[SongResult]
-    points_2d: list[Point2D]
-    points_3d: list[Point3D]
-    total_filtered: int
-    message: str | None = None
-
-
 class AllSongsResponse(BaseModel):
-    """Response for loading all songs (initial load / reset)."""
-
     songs: list[SongResult]
-    points_2d: list[Point2D]
-    points_3d: list[Point3D]
+    projections_2d: list[Point2D]
+    projections_3d: list[Point3D]
     total: int
+
+
+class FilterRequest(BaseModel):
+    query: str
+    song_ids: list[int] | None = None   # None → start from all songs
+
+
+class FilterResponse(BaseModel):
+    songs: list[SongResult]
+    projections_2d: list[Point2D]
+    projections_3d: list[Point3D]
+    total_remaining: int
+    message: str | None = None

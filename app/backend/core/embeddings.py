@@ -1,10 +1,13 @@
 """
-Embedding and similarity module.
+Embedding and similarity module — progressive filtering.
 
-MOCK: Uses simple substring matching to simulate semantic search.
-REAL: Would use a multilingual sentence transformer (e.g., multilingual-e5-large)
-      to encode queries and compute cosine similarity against pre-computed song embeddings.
+MOCK: Uses substring matching to simulate semantic search.
+REAL: Would use a multilingual sentence transformer (e.g. multilingual-e5-large)
+      to encode queries and compute cosine similarity against pre-computed song
+      embeddings.
 """
+
+from __future__ import annotations
 
 import random
 
@@ -13,91 +16,104 @@ def text_to_embedding(text: str) -> list[float]:
     """
     Convert a user query text into an embedding vector.
 
-    MOCK: Returns a random vector of dimension 128.
+    MOCK: Returns a deterministic-ish random vector of dimension 32 seeded
+          by the hash of the text, so repeated queries give the same result.
     REAL: Would use multilingual-e5-large or similar model to encode the text.
-          The model should be loaded once at startup and reused for all queries.
-          For E5 models, prepend "query: " to the input text before encoding.
+          Prepend "query: " to the input for E5 models.
 
     Args:
         text: The user's search query string.
-
     Returns:
-        A list of floats representing the query embedding (dimension depends on model).
+        A list of floats representing the query embedding.
     """
-    return [random.uniform(-1.0, 1.0) for _ in range(128)]
+    rng = random.Random(hash(text))
+    return [rng.uniform(-1.0, 1.0) for _ in range(32)]
 
 
 def compute_similarity(query_embedding: list[float], song_embedding: list[float]) -> float:
     """
     Compute similarity between a query embedding and a song embedding.
 
-    MOCK: Returns a random score between 0 and 1.
-    REAL: Would compute cosine similarity between the two vectors:
-          cos_sim = dot(a, b) / (norm(a) * norm(b))
-          Could also use FAISS or similar library for efficient batch similarity.
-
-    Args:
-        query_embedding: The embedding vector for the user's query.
-        song_embedding: The embedding vector for a song.
+    MOCK: Returns a random score.
+    REAL: Would compute cosine similarity: dot(a,b) / (‖a‖·‖b‖).
 
     Returns:
-        A float between 0 and 1 representing similarity (1 = most similar).
+        Float between 0 and 1 (1 = most similar).
     """
     return random.uniform(0.0, 1.0)
 
 
-def filter_embeddings(query_text: str, songs: list[dict], top_k: int = 10) -> list[dict]:
+def filter_embeddings(query_text: str, songs: list[dict]) -> list[dict]:
     """
-    Main filtering function. Takes a query text and all songs, returns songs
-    scored by relevance to the query.
+    Progressive filter.  Given a query and the CURRENT subset of songs
+    (which may already have been narrowed by earlier queries), returns a
+    further-filtered subset with relevance scores.
 
-    MOCK: Performs case-insensitive substring matching on title, artist, and
-          lyrics_snippet. Matching songs get a high score (0.7-1.0), while
-          non-matching songs get a low score (0.1-0.5). This makes the mock
-          testable and somewhat useful for development.
-    REAL: Would:
-          1. Encode the query text using text_to_embedding().
-          2. Compute cosine similarity between the query embedding and every
-             song's pre-computed embedding vector.
-          3. Sort by similarity score descending.
-          4. Optionally use approximate nearest neighbor search (FAISS, Annoy)
-             for efficiency at scale (126k+ songs).
+    The frontend tracks the surviving song IDs across queries.  Each call
+    to this function narrows the set further.
 
-    Each returned song dict gets an added 'score' field (float 0-1).
+    MOCK implementation
+    -------------------
+    1. Case-insensitive substring match on title / artist / lyrics / genre / album.
+    2. Matching songs get a high score (0.70 – 1.00).
+    3. Non-matching songs get a low score (0.05 – 0.40).
+    4. All matches are kept.  ~30 % of non-matches are also kept (random)
+       so that the set shrinks gradually.
+    5. The function NEVER returns an empty list.  If everything would be
+       removed, the single best-scoring song is retained.
+
+    REAL implementation (to be replaced)
+    ------------------------------------
+    1. Encode query_text with text_to_embedding().
+    2. Compute cosine similarity against each song's pre-computed embedding.
+    3. Apply an adaptive threshold (e.g. percentile-based) to decide which
+       songs survive.
+    4. Return survivors sorted by score descending, minimum 1.
 
     Args:
         query_text: The user's search query.
-        songs: List of all song dicts (with metadata and embeddings).
-        top_k: How many top results to highlight (used by frontend for styling).
-
+        songs:      Current subset of songs (already filtered by previous queries).
     Returns:
-        List of all songs with 'score' field added, sorted by score descending.
+        A filtered list of song dicts, each with an added 'score' field,
+        sorted by score descending.  Always contains ≥ 1 song.
     """
     query_lower = query_text.lower().strip()
-    scored_songs = []
+    if not query_lower:
+        # Empty query → return everything with neutral score
+        return [{**s, "score": 0.5} for s in songs]
+
+    matches = []
+    non_matches = []
 
     for song in songs:
-        # Check for substring match in key text fields
-        searchable_fields = [
+        searchable = " ".join([
             song.get("title", ""),
             song.get("artist", ""),
             song.get("lyrics_snippet", ""),
             song.get("album", ""),
             song.get("genre", ""),
-        ]
-        searchable_text = " ".join(searchable_fields).lower()
+        ]).lower()
 
-        if query_lower in searchable_text:
-            # Match found: assign high score with some randomness for ranking variety
-            score = round(random.uniform(0.7, 1.0), 4)
+        if query_lower in searchable:
+            score = round(random.uniform(0.70, 1.00), 4)
+            matches.append({**song, "score": score})
         else:
-            # No match: assign low score
-            score = round(random.uniform(0.1, 0.5), 4)
+            score = round(random.uniform(0.05, 0.40), 4)
+            non_matches.append({**song, "score": score})
 
-        scored_song = {**song, "score": score}
-        scored_songs.append(scored_song)
+    # Keep all matches + a random ~30% of non-matches
+    kept_non_matches = [s for s in non_matches if random.random() < 0.30]
 
-    # Sort by score descending
-    scored_songs.sort(key=lambda s: s["score"], reverse=True)
+    survivors = matches + kept_non_matches
 
-    return scored_songs
+    # Never return empty
+    if not survivors:
+        # Fall back: keep the single best non-match (or the first song)
+        if non_matches:
+            non_matches.sort(key=lambda s: s["score"], reverse=True)
+            survivors = [non_matches[0]]
+        else:
+            survivors = [{**songs[0], "score": 0.10}]
+
+    survivors.sort(key=lambda s: s["score"], reverse=True)
+    return survivors
